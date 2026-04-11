@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Send, User, Star, ArrowLeft, MessageCircle, ShieldCheck, ChevronRight, Clock } from 'lucide-react';
 
 const PoolChat = () => {
   const { poolId } = useParams();
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [pool, setPool] = useState<any>(null);
   const [isMember, setIsMember] = useState(false);
   const [isCreator, setIsCreator] = useState(false);
-  const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [participants, setParticipants] = useState<any[]>([]);
   const [ratingModal, setRatingModal] = useState<{ open: boolean; target: any | null }>({ open: false, target: null });
   const [ratingScore, setRatingScore] = useState(0);
@@ -37,7 +39,6 @@ const PoolChat = () => {
     setIsCreator(creator);
     if (creator) {
       setIsMember(true);
-      setRequestStatus(null);
     } else {
       const { data: acceptedRequests } = await supabase
         .from('pool_requests')
@@ -46,34 +47,8 @@ const PoolChat = () => {
         .eq('requester_id', user.id)
         .eq('status', 'accepted');
 
-      const { data: pendingRequests } = await supabase
-        .from('pool_requests')
-        .select('*')
-        .eq('pool_id', poolId)
-        .eq('requester_id', user.id)
-        .eq('status', 'pending');
-
-      const { data: rejectedRequests } = await supabase
-        .from('pool_requests')
-        .select('*')
-        .eq('pool_id', poolId)
-        .eq('requester_id', user.id)
-        .eq('status', 'rejected');
-
       const acceptedCount = (acceptedRequests || []).length;
-      const pendingCount = (pendingRequests || []).length;
-      const rejectedCount = (rejectedRequests || []).length;
-
       setIsMember(acceptedCount > 0);
-      if (acceptedCount > 0) {
-        setRequestStatus('accepted');
-      } else if (pendingCount > 0) {
-        setRequestStatus('pending');
-      } else if (rejectedCount > 0) {
-        setRequestStatus('rejected');
-      } else {
-        setRequestStatus(null);
-      }
     }
     setLoading(false);
   };
@@ -94,19 +69,18 @@ const PoolChat = () => {
 
       const people: any[] = [];
       if (creatorProfile.data && creatorProfile.data.id !== currentUserIdValue) {
-        people.push({ id: creatorProfile.data.id, name: creatorProfile.data.name || 'Creator' });
+        people.push({ id: creatorProfile.data.id, name: creatorProfile.data.name || 'Creator', isCreator: true });
       }
 
       (acceptedRequests || []).forEach((req: any) => {
         if (req.requester_id !== currentUserIdValue) {
-          people.push({ id: req.requester_id, name: req.user_profiles?.name || 'Rider' });
+          people.push({ id: req.requester_id, name: req.user_profiles?.name || 'Rider', isCreator: false });
         }
       });
 
       setParticipants(people);
     } catch (error) {
-      console.error('Failed to load pool participants for rating', error);
-      setParticipants([]);
+      console.error('Failed to load pool participants', error);
     }
   };
 
@@ -118,266 +92,206 @@ const PoolChat = () => {
 
   const submitPersonRating = async () => {
     if (!ratingModal.target || !currentUserId) return;
-    if (ratingScore <= 0 || ratingScore > 5) {
-      alert('Please choose a rating between 1 and 5.');
-      return;
-    }
-
     setRatingSubmitting(true);
     try {
-      const { error } = await supabase.from('ratings').insert([{ 
+      const { error } = await supabase.from('ratings').insert([{
         rater_id: currentUserId,
         ratee_id: ratingModal.target.id,
         score: ratingScore,
         comments: ratingComment || null
       }]);
 
-      if (error) {
-        console.error('Rating save failed', error);
-        alert('Unable to save rating. Please try again later.');
-      } else {
-        alert(`Rating saved for ${ratingModal.target.name || 'this rider'}.`);
+      if (!error) {
         setRatingModal({ open: false, target: null });
+      } else {
+        alert('Could not save rating.');
       }
     } catch (err) {
-      console.error('Could not submit rating:', err);
-      alert('Failed to save rating. Please try again.');
+      console.error(err);
     } finally {
       setRatingSubmitting(false);
     }
   };
 
-  useEffect(() => {
-    loadPoolAndMembership();
-  }, [poolId]);
+  useEffect(() => { loadPoolAndMembership(); }, [poolId]);
 
   useEffect(() => {
     if (!poolId) return;
-
     const fetchMessages = async () => {
-      const { data } = await supabase
-        .from('pool_messages')
-        .select(`
-          *,
-          user_profiles ( name )
-        `)
-        .eq('pool_id', poolId)
-        .order('created_at', { ascending: true });
+      const { data } = await supabase.from('pool_messages').select(`*, user_profiles(name)`).eq('pool_id', poolId).order('created_at', { ascending: true });
       if (data) setMessages(data);
     };
-
     fetchMessages();
 
     const chatChannel = supabase.channel(`chat:${poolId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'pool_messages',
-        filter: `pool_id=eq.${poolId}`
-      }, async (payload) => {
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('name')
-          .eq('id', payload.new.sender_id)
-          .single();
-        const msgWithProfile = { ...payload.new, user_profiles: profile };
-        setMessages((prev) => [...prev, msgWithProfile]);
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pool_messages', filter: `pool_id=eq.${poolId}` }, async (payload) => {
+        const { data: profile } = await supabase.from('user_profiles').select('name').eq('id', payload.new.sender_id).single();
+        setMessages((prev) => [...prev, { ...payload.new, user_profiles: profile }]);
       })
       .subscribe();
 
-    const requestChannel = supabase.channel(`request-status:${poolId}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'pool_requests',
-        filter: `pool_id=eq.${poolId},requester_id=eq.${currentUserId}`
-      }, async () => {
-        await loadPoolAndMembership();
-      })
-      .subscribe();
+    return () => { supabase.removeChannel(chatChannel); };
+  }, [poolId]);
 
-    return () => {
-      supabase.removeChannel(chatChannel);
-      supabase.removeChannel(requestChannel);
-    };
-  }, [poolId, currentUserId]);
-
-  // Scroll to bottom when new messages arrive
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const handleRequestJoin = async () => {
-    if (!pool || !currentUserId || !poolId) return;
-    if (pool.status === 'full' || pool.available_seats === 0) {
-      alert('This pool is full and cannot accept new members.');
-      return;
-    }
-    if (requestStatus === 'pending') {
-      alert('Your request is already pending.');
-      return;
-    }
-
-    const { error } = await supabase.from('pool_requests').insert([{ 
-      pool_id: poolId,
-      requester_id: currentUserId,
-      requester_source_lat: pool.source_lat,
-      requester_source_lng: pool.source_lng,
-      requester_dest_lat: pool.dest_lat,
-      requester_dest_lng: pool.dest_lng,
-      requester_time: pool.time_window_start,
-      status: 'pending'
-    }]);
-
-    if (error) {
-      alert('Unable to send join request.');
-    } else {
-      setRequestStatus('pending');
-      alert('Join request submitted. The creator will review it soon.');
-    }
-  };
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !currentUserId || (!isMember && !isCreator)) return;
-
-    const { error } = await supabase.from('pool_messages').insert({
-      pool_id: poolId,
-      sender_id: currentUserId,
-      message: newMessage.trim()
-    });
-
+    const { error } = await supabase.from('pool_messages').insert({ pool_id: poolId, sender_id: currentUserId, message: newMessage.trim() });
     if (!error) setNewMessage('');
   };
 
-  if (loading) {
-    return <div style={{ padding: '24px', textAlign: 'center' }}>Loading pool details...</div>;
-  }
-
-  if (!pool) {
-    return <div style={{ padding: '24px', textAlign: 'center' }}>Pool not found.</div>;
-  }
-
-  if (!isMember && !isCreator) {
-    return (
-      <div style={{ padding: '24px', maxWidth: '720px', margin: '0 auto' }}>
-        <h2 style={{ marginBottom: '12px' }}>{pool.source_text} → {pool.dest_text}</h2>
-        <p style={{ marginBottom: '8px' }}>Status: <strong>{pool.status?.toUpperCase()}</strong></p>
-        <p style={{ marginBottom: '18px', color: '#aaa' }}>
-          You are not yet part of this pool. Request access and the pool creator can approve you based on score or personal review.
-        </p>
-        {requestStatus === 'accepted' ? (
-          <button className="btn btn-primary" disabled>
-            Request Accepted — access granted. Refresh if needed.
-          </button>
-        ) : requestStatus === 'pending' ? (
-          <button className="btn btn-outline" disabled>
-            Request Pending
-          </button>
-        ) : requestStatus === 'rejected' ? (
-          <button className="btn btn-outline" disabled>
-            Request Rejected
-          </button>
-        ) : pool.status === 'full' ? (
-          <button className="btn btn-outline" disabled>
-            Pool Full
-          </button>
-        ) : pool.status === 'completed' ? (
-          <button className="btn btn-outline" disabled>
-            Ride Completed
-          </button>
-        ) : (
-          <button className="btn btn-primary" onClick={handleRequestJoin}>
-            Request to Join
-          </button>
-        )}
-      </div>
-    );
-  }
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center h-screen">
+      <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+    </div>
+  );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '90vh', padding: '20px' }}>
-      {ratingModal.open && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '420px', padding: '28px', position: 'relative' }}>
-            <button style={{ position: 'absolute', top: '14px', right: '14px', border: 'none', background: 'transparent', color: '#fff', fontSize: '18px', cursor: 'pointer' }} onClick={() => setRatingModal({ open: false, target: null })}>
-              ×
-            </button>
-            <h2 style={{ marginBottom: '12px' }}>Rate {ratingModal.target?.name || 'this rider'}</h2>
-            <p className="text-muted" style={{ marginBottom: '16px' }}>Leave a score and optional comment for this person.</p>
-            <div className="flex gap-2" style={{ marginBottom: '16px' }}>
-              {[1,2,3,4,5].map((value) => (
-                <button key={value} type="button" className={`btn ${ratingScore >= value ? 'btn-primary' : 'btn-outline'}`} onClick={() => setRatingScore(value)}>
-                  {value}
-                </button>
-              ))}
-            </div>
-            <textarea
-              value={ratingComment}
-              onChange={(e) => setRatingComment(e.target.value)}
-              placeholder="Add a note (optional)"
-              style={{ width: '100%', minHeight: '100px', padding: '12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.12)', marginBottom: '16px', background: 'rgba(255,255,255,0.03)', color: 'white' }}
-            />
-            <button className="btn btn-primary w-full" type="button" onClick={submitPersonRating} disabled={ratingSubmitting || ratingScore === 0}>
-              {ratingSubmitting ? 'Saving...' : 'Save Rating'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {participants.length > 0 && (
-        <div className="glass-card" style={{ marginBottom: '16px', padding: '18px' }}>
-          <h3 style={{ marginBottom: '12px' }}>Rate riders or the creator</h3>
-          <div style={{ display: 'grid', gap: '10px' }}>
-            {participants.map((person) => (
-              <div key={person.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div>
-                  <p style={{ margin: 0, fontWeight: 600 }}>{person.name || 'Rider'}</p>
-                  <p className="text-muted" style={{ margin: 0, fontSize: '0.85rem' }}>{person.id}</p>
-                </div>
-                <button className="btn btn-outline" type="button" onClick={() => openRatingModal(person)}>
-                  Rate
-                </button>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="max-w-7xl mx-auto px-6 py-8 flex flex-col lg:flex-row gap-8 h-[calc(100vh-100px)]"
+    >
+      {/* RATING MODAL */}
+      <AnimatePresence>
+        {ratingModal.open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 bg-[#121212]/95 z-[100] flex items-center justify-center p-6 backdrop-blur-sm"
+          >
+            <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-sm text-center shadow-2xl">
+              <h3 className="text-2xl font-black text-[#121212] mb-6 tracking-tighter italic">Rate Buddy</h3>
+              <div className="flex justify-center gap-2 mb-8">
+                {[1, 2, 3, 4, 5].map(s => (
+                  <Star
+                    key={s} size={32}
+                    fill={ratingScore >= s ? '#FFC107' : 'none'}
+                    className={`cursor-pointer ${ratingScore >= s ? 'text-[#FFC107]' : 'text-gray-200'}`}
+                    onClick={() => setRatingScore(s)}
+                  />
+                ))}
               </div>
-            ))}
+              <textarea
+                className="input-premium mb-6 h-24"
+                placeholder="Any feedback for this rider?"
+                value={ratingComment}
+                onChange={e => setRatingComment(e.target.value)}
+              />
+              <div className="flex gap-4">
+                <button onClick={() => setRatingModal({ open: false, target: null })} className="flex-1 py-4 text-xs font-black uppercase text-gray-400">Cancel</button>
+                <button onClick={submitPersonRating} disabled={ratingSubmitting} className="flex-1 btn-primary py-4">Save</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* SIDEBAR: POOL INFO & PARTICIPANTS */}
+      <aside className="lg:w-80 flex flex-col gap-6 shrink-0">
+        <div className="bg-white rounded-3xl border border-gray-100 p-8 shadow-lg">
+          <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-xs font-black text-gray-300 uppercase tracking-widest mb-8 hover:text-[#121212] transition-colors">
+            <ArrowLeft size={16} /> Back
+          </button>
+          <h2 className="text-2xl font-black text-[#121212] tracking-tighter mb-2">{pool.source_text?.split(',')[0]} <ChevronRight className="inline text-[#FFC107]" size={20} /></h2>
+          <h2 className="text-2xl font-black text-[#121212] tracking-tighter mb-6">{pool.dest_text?.split(',')[0]}</h2>
+
+          <div className="flex items-center gap-3 py-4 border-y border-gray-50 mb-8">
+            <div className="w-10 h-10 bg-[#FFC107]/10 rounded-xl flex items-center justify-center text-[#FFC107]">
+              <Clock size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black uppercase text-gray-400">Departure</p>
+              <p className="text-sm font-bold text-[#121212]">{new Date(pool.time_window_start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Buddies in Car</p>
+            {participants.length === 0 ? (
+              <p className="text-xs font-bold text-gray-300 italic">No other buddies yet.</p>
+            ) : (
+              participants.map(p => (
+                <div key={p.id} className="flex items-center justify-between group">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-300">
+                      <User size={16} />
+                    </div>
+                    <span className="text-sm font-bold text-[#121212]">{p.name || 'Member'}</span>
+                  </div>
+                  <button onClick={() => openRatingModal(p)} className="p-2 opacity-0 group-hover:opacity-100 text-[#FFC107] hover:scale-110 transition-all">
+                    <Star size={16} />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
-      )}
+      </aside>
 
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {messages.map((msg) => {
-          const isMe = msg.sender_id === currentUserId;
-          return (
-            <div key={msg.id} style={{
-              alignSelf: isMe ? 'flex-end' : 'flex-start',
-              backgroundColor: isMe ? '#007bff' : '#333',
-              padding: '10px',
-              borderRadius: '10px',
-              color: 'white',
-              maxWidth: '70%'
-            }}>
-              {!isMe && (
-                <div style={{ fontSize: '0.7rem', color: '#aaa', marginBottom: '4px' }}>
-                  {msg.user_profiles?.name || 'User'}
-                </div>
-              )}
-              <div>{msg.message}</div>
+      {/* MAIN: CHAT AREA */}
+      <main className="flex-1 bg-white rounded-3xl border border-gray-100 shadow-lg flex flex-col overflow-hidden relative">
+        <div className="px-8 py-6 border-b border-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#121212] rounded-xl flex items-center justify-center text-[#FFC107]">
+              <MessageCircle size={20} />
             </div>
-          );
-        })}
-        <div ref={messagesEndRef} />
-      </div>
+            <div>
+              <h4 className="font-black text-[#121212] tracking-tight">Pool Hangout</h4>
+              <p className="text-[10px] font-black uppercase text-[#FFC107] italic">Live Real-time</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-xl text-xs font-black text-gray-400">
+            <ShieldCheck size={16} className="text-green-500" /> Secure
+          </div>
+        </div>
 
-      <form onSubmit={sendMessage} style={{ display: 'flex', marginTop: '10px' }}>
-        <input 
-          style={{ flex: 1, padding: '10px', borderRadius: '5px', border: '1px solid #ccc' }}
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type a message..."
-        />
-        <button type="submit" style={{ padding: '10px 20px', marginLeft: '5px' }}>Send</button>
-      </form>
-    </div>
+        {/* MESSAGES */}
+        <div className="flex-1 overflow-y-auto p-8 flex flex-col gap-6 custom-scrollbar">
+          {messages.map((msg, idx) => {
+            const isMe = msg.sender_id === currentUserId;
+            return (
+              <motion.div
+                initial={{ opacity: 0, x: isMe ? 20 : -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                key={idx}
+                className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+              >
+                <div className={`max-w-[80%] px-6 py-4 rounded-3xl font-medium text-sm shadow-sm ${isMe ? 'bg-[#121212] text-white rounded-tr-none' : 'bg-gray-50 text-[#121212] rounded-tl-none border border-gray-100'}`}>
+                  {msg.message}
+                </div>
+                <span className="text-[9px] font-black uppercase text-gray-300 mt-2 px-2">
+                  {isMe ? 'You' : msg.user_profiles?.name || 'Buddy'} • {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </motion.div>
+            );
+          })}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* INPUT */}
+        <form onSubmit={sendMessage} className="p-6 border-t border-gray-50 bg-white">
+          <div className="relative">
+            <input
+              type="text"
+              className="input-premium pr-16 h-16"
+              placeholder="Say something to the group..."
+              value={newMessage}
+              onChange={e => setNewMessage(e.target.value)}
+            />
+            <button
+              type="submit"
+              disabled={!newMessage.trim()}
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-12 h-12 bg-[#FFC107] rounded-xl flex items-center justify-center text-[#121212] hover:scale-105 active:scale-95 transition-all shadow-lg"
+            >
+              <Send size={20} />
+            </button>
+          </div>
+        </form>
+      </main>
+    </motion.div>
   );
 };
 
