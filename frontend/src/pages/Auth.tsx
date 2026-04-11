@@ -27,7 +27,6 @@ const Auth = () => {
           email,
           options: {
             data: { name, gender, phone_number: phone }, // Attach metadata
-            emailRedirectTo: window.location.origin
           }
         });
         if (error) throw error;

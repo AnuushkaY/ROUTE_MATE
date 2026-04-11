@@ -1,18 +1,45 @@
 import math
 
+BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz'
+
 def calculate_geohash(lat: float, lng: float, precision: int = 6) -> str:
     """
-    Very basic implementation or stub for Geohash. 
-    In production, use the `pygeohash` package.
+    Encode latitude/longitude into a geohash string.
     """
-    # Standard python package `pygeohash` is recommended. 
-    # For now, returning a basic string for structure.
-    try:
-        import pygeohash as pgh
-        return pgh.encode(lat, lng, precision=precision)
-    except ImportError:
-        # Fallback dummy if package not available
-        return f"GH{lat:.2f}{lng:.2f}"
+    lat_interval = [-90.0, 90.0]
+    lon_interval = [-180.0, 180.0]
+    geohash = []
+    bit = 0
+    ch = 0
+    even = True
+
+    while len(geohash) < precision:
+        if even:
+            mid = (lon_interval[0] + lon_interval[1]) / 2
+            if lng >= mid:
+                ch = (ch << 1) + 1
+                lon_interval[0] = mid
+            else:
+                ch = ch << 1
+                lon_interval[1] = mid
+        else:
+            mid = (lat_interval[0] + lat_interval[1]) / 2
+            if lat >= mid:
+                ch = (ch << 1) + 1
+                lat_interval[0] = mid
+            else:
+                ch = ch << 1
+                lat_interval[1] = mid
+
+        even = not even
+        bit += 1
+
+        if bit == 5:
+            geohash.append(BASE32[ch])
+            bit = 0
+            ch = 0
+
+    return ''.join(geohash)
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """

@@ -28,33 +28,67 @@ def get_headers():
 class NearbyRequest(BaseModel):
     lat: float
     lng: float
-    radius_km: float = 0.5
+    radius_km: float = 0.5 # Default is small, but frontend can override
+    user_id: Optional[str] = None
     
 class MatchRequest(BaseModel):
     pool_id: str
+
+class RequestResponse(BaseModel):
+    status: str
 
 @router.post("/pools/nearby")
 async def get_nearby_pools(req: NearbyRequest):
     headers = get_headers()
     try:
         async with httpx.AsyncClient() as client:
-            # Fetch open pools
-            url = f"{SUPABASE_URL}/rest/v1/pools?status=eq.open&available_seats=gt.0"
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            pools = response.json()
+            pool_endpoint = f"{SUPABASE_URL}/rest/v1/pools"
+            base_params = {
+                # Only show pools that are currently available for ride matching.
+                # Do not include completed or dissolved pools in the nearby listing.
+                "status": "in.(open,active,full)",
+                "available_seats": "gt.0",
+            }
+
+            if req.radius_km > 0:
+                geohash_prefix = calculate_geohash(req.lat, req.lng, precision=4)
+                params = {**base_params, "source_geohash": f"like.{geohash_prefix}%"}
+                response = await client.get(pool_endpoint, headers=headers, params=params)
+                response.raise_for_status()
+                pools = response.json()
+                if not pools:
+                    response = await client.get(pool_endpoint, headers=headers, params=base_params)
+                    response.raise_for_status()
+                    pools = response.json()
+            else:
+                response = await client.get(pool_endpoint, headers=headers, params=base_params)
+                response.raise_for_status()
+                pools = response.json()
         
+        # 2. GLOBAL VIEW LOGIC
+        # If radius is 0 or less, we skip distance filtering entirely for testing
+        if req.radius_km <= 0:
+            for p in pools:
+                # Still calculate distance for display purposes, but don't filter
+                dist = haversine_distance(req.lat, req.lng, float(p['source_lat']), float(p['source_lng']))
+                p['distance_km'] = round(dist, 2)
+            return {"pools": pools}
+
         nearby_pools = []
         for p in pools:
             dist = haversine_distance(req.lat, req.lng, float(p['source_lat']), float(p['source_lng']))
+            
+            # 3. RADIUS FILTER
             if dist <= req.radius_km:
                 p['distance_km'] = round(dist, 2)
                 nearby_pools.append(p)
                 
         # Sort by distance
-        nearby_pools.sort(key=lambda x: x['distance_km'])
+        nearby_pools.sort(key=lambda x: x.get('distance_km', 0))
         return {"pools": nearby_pools}
+        
     except Exception as e:
+        print(f"Error in nearby pools: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/pools/{pool_id}/requests")
@@ -71,13 +105,25 @@ async def get_pool_requests_scored(pool_id: str):
                 raise HTTPException(status_code=404, detail="Pool not found")
             pool = pool_data[0]
             
-            # Fetch the requests with user profiles (using PostgREST relation syntax `select=*,user_profiles(*)`)
-            url_req = f"{SUPABASE_URL}/rest/v1/pool_requests?pool_id=eq.{pool_id}&status=eq.pending&select=*,user_profiles(*)"
+            # Fetch pending requests
+            url_req = f"{SUPABASE_URL}/rest/v1/pool_requests?pool_id=eq.{pool_id}&status=eq.pending&select=*"
             req_res = await client.get(url_req, headers=headers)
             req_res.raise_for_status()
-            requests = req_res.json()
-        
+            requests = req_res.json() or []
+
+            # Fetch requester profiles for those pending requests
+            requester_ids = list({req['requester_id'] for req in requests if 'requester_id' in req})
+            profiles = {}
+            if requester_ids:
+                quoted_ids = ','.join([f'"{requester_id}"' for requester_id in requester_ids])
+                url_profiles = f"{SUPABASE_URL}/rest/v1/user_profiles?id=in.({quoted_ids})"
+                profile_res = await client.get(url_profiles, headers=headers)
+                profile_res.raise_for_status()
+                for profile in profile_res.json() or []:
+                    profiles[profile['id']] = profile
+
         scored_requests = []
+        # Reuse client for patches
         async with httpx.AsyncClient() as client:
             for req in requests:
                 score = calculate_heuristic_score(
@@ -88,17 +134,63 @@ async def get_pool_requests_scored(pool_id: str):
                     req_dest=(float(req['requester_dest_lat']), float(req['requester_dest_lng'])),
                     req_time=req['requester_time']
                 )
-                
+
+                req['user_profiles'] = profiles.get(req['requester_id'])
                 # Update score in DB
                 update_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{req['id']}"
                 await client.patch(update_url, headers=headers, json={"heuristic_score": score})
-                
+
                 req['heuristic_score'] = score
                 scored_requests.append(req)
             
-        # Sort by score descending
         scored_requests.sort(key=lambda x: x['heuristic_score'], reverse=True)
         return {"requests": scored_requests}
     
+    except Exception as e:
+        print(f"Error fetching scored pool requests for pool {pool_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/pool_requests/{request_id}/respond")
+async def respond_to_pool_request(request_id: str, body: RequestResponse):
+    if body.status not in ['accepted', 'rejected']:
+        raise HTTPException(status_code=400, detail="Invalid request status")
+
+    headers = get_headers()
+    try:
+        async with httpx.AsyncClient() as client:
+            req_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{request_id}"
+            req_res = await client.get(req_url, headers=headers)
+            req_res.raise_for_status()
+            req_data = req_res.json()
+            if not req_data:
+                raise HTTPException(status_code=404, detail="Request not found")
+            request_record = req_data[0]
+            pool_id = request_record['pool_id']
+
+            if body.status == 'accepted':
+                pool_url = f"{SUPABASE_URL}/rest/v1/pools?id=eq.{pool_id}"
+                pool_res = await client.get(pool_url, headers=headers)
+                pool_res.raise_for_status()
+                pool_data = pool_res.json()
+                if not pool_data:
+                    raise HTTPException(status_code=404, detail="Pool not found")
+                pool_record = pool_data[0]
+
+                available_seats = int(pool_record.get('available_seats', 0))
+                if available_seats <= 0 or pool_record.get('status') == 'full':
+                    raise HTTPException(status_code=400, detail="Pool is already full")
+
+                new_seats = available_seats - 1
+                pool_update = {'available_seats': new_seats}
+                if new_seats <= 0:
+                    pool_update['status'] = 'full'
+
+                update_pool_url = f"{SUPABASE_URL}/rest/v1/pools?id=eq.{pool_id}"
+                await client.patch(update_pool_url, headers=headers, json=pool_update)
+
+            update_req_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{request_id}"
+            await client.patch(update_req_url, headers=headers, json={"status": body.status})
+
+        return {"status": "ok", "request_id": request_id, "new_status": body.status}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -4,6 +4,50 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { CheckCircle, Loader } from 'lucide-react';
 
+const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
+
+const encodeGeohash = (lat: number, lng: number, precision: number = 6): string => {
+  let isEven = true;
+  let bit = 0;
+  let ch = 0;
+  let geohash = '';
+  let latInterval: [number, number] = [-90, 90];
+  let lngInterval: [number, number] = [-180, 180];
+
+  while (geohash.length < precision) {
+    if (isEven) {
+      const mid = (lngInterval[0] + lngInterval[1]) / 2;
+      if (lng >= mid) {
+        ch = (ch << 1) + 1;
+        lngInterval[0] = mid;
+      } else {
+        ch = ch << 1;
+        lngInterval[1] = mid;
+      }
+    } else {
+      const mid = (latInterval[0] + latInterval[1]) / 2;
+      if (lat >= mid) {
+        ch = (ch << 1) + 1;
+        latInterval[0] = mid;
+      } else {
+        ch = ch << 1;
+        latInterval[1] = mid;
+      }
+    }
+
+    isEven = !isEven;
+    bit += 1;
+
+    if (bit === 5) {
+      geohash += BASE32[ch];
+      bit = 0;
+      ch = 0;
+    }
+  }
+
+  return geohash;
+};
+
 const CreatePool = () => {
   const [formData, setFormData] = useState({
     sourceText: '',
@@ -72,7 +116,7 @@ const CreatePool = () => {
         creator_id: user.id,
         source_lat: sourceCoords.lat,
         source_lng: sourceCoords.lng,
-        source_geohash: `GH-${sourceCoords.lat.toFixed(2)}-${sourceCoords.lng.toFixed(2)}`,
+        source_geohash: encodeGeohash(sourceCoords.lat, sourceCoords.lng, 6),
         source_text: formData.sourceText,
         dest_lat: destCoords.lat,
         dest_lng: destCoords.lng,
@@ -81,7 +125,7 @@ const CreatePool = () => {
         capacity: formData.capacity,
         available_seats: formData.capacity,
         mode_of_transport: formData.modeOfTransport,
-        status: 'active' // <--- "Active" status used for visibility logic
+        status: 'open' // Pool is visible on home page
       });
 
       if (poolError) throw new Error(poolError.message);
