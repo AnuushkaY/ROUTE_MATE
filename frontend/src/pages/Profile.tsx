@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { 
-  User, Shield, Star, LogOut, CheckCircle, 
-  Clock, History, MessageSquare, Phone, Mail, VenusAndMars, Calendar 
+import {
+  User, Star, LogOut, CheckCircle,
+  MessageSquare, Phone, Mail, VenusAndMars, Calendar,
+  ShieldCheck, TrendingUp, ChevronRight
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -23,6 +25,8 @@ const Profile = () => {
   const [averageRating, setAverageRating] = useState<number>(0);
   const [ratingCount, setRatingCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'ongoing' | 'history' | 'reviews'>('ongoing');
+
   const navigate = useNavigate();
 
   const fetchRatingStats = async (userId: string) => {
@@ -62,27 +66,14 @@ const Profile = () => {
       setAverageRating(avg);
     } catch (err) {
       console.error('Failed to load user ratings:', err);
-      setReceivedRatings([]);
-      setRatingCount(0);
-      setAverageRating(0);
     }
   };
 
   const fetchFullProfileData = async () => {
     setLoading(true);
     try {
-      const { data: { user }, error } = await supabase.auth.getUser();
-      if (error) {
-        console.error('Profile auth error', error);
-        if (error.message?.includes('Invalid refresh token')) {
-          await supabase.auth.signOut();
-          navigate('/auth');
-          return;
-        }
-      }
-
+      const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // 1. Fetch Detailed User Info
         const { data: profileData } = await supabase
           .from('user_profiles')
           .select('*')
@@ -90,16 +81,14 @@ const Profile = () => {
           .single();
         if (profileData) setProfile(profileData);
 
-        // 2. Fetch user rating stats
         await fetchRatingStats(user.id);
 
-        // 3. Fetch Pools
         const { data: myPools } = await supabase
           .from('pools')
           .select(`*`)
           .eq('creator_id', user.id)
           .order('created_at', { ascending: false });
-          
+
         if (myPools) setPools(myPools);
       }
     } catch (err) {
@@ -110,24 +99,14 @@ const Profile = () => {
   };
 
   const fetchPendingRequests = async (poolIds: string[]) => {
-    if (!poolIds.length) {
-      setPendingRequestsByPool({});
-      return;
-    }
-
+    if (!poolIds.length) return;
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('pool_requests')
         .select('*,user_profiles(*)')
         .in('pool_id', poolIds)
         .eq('status', 'pending')
         .order('created_at', { ascending: true });
-
-      if (error) {
-        console.error('Pending requests load failed:', error);
-        setPendingRequestsByPool({});
-        return;
-      }
 
       const grouped: Record<string, any[]> = {};
       (data || []).forEach((req: any) => {
@@ -136,8 +115,7 @@ const Profile = () => {
       });
       setPendingRequestsByPool(grouped);
     } catch (err) {
-      console.error('Pending requests error:', err);
-      setPendingRequestsByPool({});
+      console.error('Pending requests load failed:', err);
     }
   };
 
@@ -147,58 +125,26 @@ const Profile = () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/pools/${poolId}/requests`);
       const nextRequests = response.data.requests || [];
-      if (nextRequests.length > 0) {
-        setRequestPanel(nextRequests);
-        return;
-      }
-
-      // Fallback to direct pending request data when backend returns an empty array
-      const fallback = pendingRequestsByPool[poolId] || [];
-      setRequestPanel(fallback);
+      setRequestPanel(nextRequests.length > 0 ? nextRequests : (pendingRequestsByPool[poolId] || []));
     } catch (error) {
       console.error('Unable to load pool requests', error);
-      try {
-        const { data } = await supabase
-          .from('pool_requests')
-          .select('*,user_profiles(*)')
-          .eq('pool_id', poolId)
-          .eq('status', 'pending')
-          .order('created_at', { ascending: true });
-        setRequestPanel(data || pendingRequestsByPool[poolId] || []);
-      } catch (fallbackError) {
-        console.error('Fallback pending request load failed', fallbackError);
-        setRequestPanel(pendingRequestsByPool[poolId] || []);
-      }
+      setRequestPanel(pendingRequestsByPool[poolId] || []);
     }
   };
 
-  const respondToRequest = async (requestId: string, poolId: string, accept: boolean) => {
+  const respondToRequest = async (requestId: string, accept: boolean) => {
     try {
       const response = await axios.post(`${API_BASE_URL}/pool_requests/${requestId}/respond`, {
         status: accept ? 'accepted' : 'rejected'
       });
 
       if (response.data?.status === 'ok') {
-        const poolIds = pools.map((pool) => pool.id);
-        if (poolIds.length) {
-          await fetchPendingRequests(poolIds);
-        }
-        setRequestPanel((prev) => prev.filter((req: any) => req.id !== requestId));
-        await fetchFullProfileData();
-        setNotification(accept ? 'Request accepted and member granted pool chat access.' : 'Request rejected. The requester has been updated.');
-        if (reviewingPoolId === poolId) {
-          await loadRequestsForPool(poolId);
-        }
+        fetchFullProfileData();
+        setNotification(accept ? 'Request accepted!' : 'Request rejected.');
+        setReviewingPoolId(null);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Unable to respond to request', error);
-      if (error?.response?.data?.detail?.includes('Invalid refresh token') || error?.message?.includes('Invalid refresh token')) {
-        await supabase.auth.signOut();
-        navigate('/auth');
-        return;
-      }
-      alert('Could not update request status.');
-      console.error('Request response error:', error);
     }
   };
 
@@ -208,19 +154,6 @@ const Profile = () => {
     if (!pools.length) return;
     const poolIds = pools.map(pool => pool.id);
     fetchPendingRequests(poolIds);
-
-    const channel = supabase.channel('pool_request_notifications')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pool_requests' }, (payload) => {
-        if (payload.new && poolIds.includes(payload.new.pool_id)) {
-          setNotification('New join request received for one of your pools.');
-          fetchPendingRequests(poolIds);
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [pools]);
 
   const handleEndPool = (poolId: string) => {
@@ -236,219 +169,364 @@ const Profile = () => {
       .eq('id', ratingModal.poolId);
 
     if (!error) {
-      setPools(prev => prev.map(p => p.id === ratingModal.poolId ? { ...p, status: 'completed', rating } : p));
       setRatingModal({ open: false, poolId: null });
+      fetchFullProfileData();
     }
   };
 
   const activePools = pools.filter(p => p.status === 'open' || p.status === 'full' || p.status === 'active');
   const historyPools = pools.filter(p => p.status === 'completed');
 
-  if (loading) return <div className="container p-10 text-center">Loading Profile Details...</div>;
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)]">
+        <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin mb-4" />
+        <span className="text-[#121212] font-black tracking-widest text-[10px] uppercase">Fetching Profile...</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="container" style={{ padding: '40px 24px' }}>
-      
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="container mx-auto px-6 py-12"
+    >
       {/* ── RATING MODAL ── */}
-      {ratingModal.open && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)' }}>
-          <div className="glass-card" style={{ maxWidth: '400px', textAlign: 'center', padding: '32px' }}>
-            <h2 style={{ marginBottom: '12px' }}>Ride Completed!</h2>
-            <p className="text-muted" style={{ marginBottom: '24px' }}>How would you rate the experience with your co-riders?</p>
-            <div className="flex justify-center gap-2 mb-8">
-              {[1,2,3,4,5].map(s => (
-                <Star key={s} size={36} onClick={() => setRating(s)} onMouseEnter={() => setHoverRating(s)} onMouseLeave={() => setHoverRating(0)}
-                  fill={(hoverRating || rating) >= s ? '#fbbf24' : 'none'} color={(hoverRating || rating) >= s ? '#fbbf24' : '#555'} style={{ cursor: 'pointer', transition: 'transform 0.1s' }} />
-              ))}
-            </div>
-            <button className="btn btn-primary w-full" onClick={confirmDissolve} disabled={rating === 0}>Save to History</button>
-          </div>
-        </div>
-      )}
-
-      <div className="grid" style={{ gridTemplateColumns: '320px 1fr', gap: '40px' }}>
-        
-        {/* ── LEFT: USER INFO ── */}
-        <aside>
-          <div className="glass-card flex-col gap-6" style={{ position: 'sticky', top: '24px' }}>
-            <div className="text-center">
-              <div style={{ width: '90px', height: '90px', background: 'var(--primary)', borderRadius: '50%', margin: '0 auto 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '4px solid rgba(255,255,255,0.1)' }}>
-                <User size={44} color="white" />
+      <AnimatePresence>
+        {ratingModal.open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-[#121212]/95 z-[100] flex items-center justify-center p-6 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white rounded-[2.5rem] p-10 w-full max-w-sm text-center shadow-2xl"
+            >
+              <div className="w-20 h-20 bg-[#FFC107]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Star size={40} className="text-[#FFC107] fill-primary" />
               </div>
-              <h2 style={{ fontSize: '1.6rem', marginBottom: '4px' }}>{profile?.name}</h2>
-              <span className="badge badge-green"><Shield size={12} /> Identity Verified</span>
-            </div>
+              <h2 className="text-3xl font-black text-[#121212] tracking-tighter mb-2">Ride Done!</h2>
+              <p className="text-gray-400 font-medium mb-8">How was the vibe with your co-riders?</p>
 
-            <div className="flex-col gap-4" style={{ borderTop: '1px solid var(--border)', paddingTop: '20px' }}>
-              <div className="flex items-center gap-3 text-sm"><Mail size={16} className="text-primary"/> {profile?.email}</div>
-              <div className="flex items-center gap-3 text-sm"><Phone size={16} className="text-primary"/> {profile?.phone_number}</div>
-              <div className="flex items-center gap-3 text-sm"><VenusAndMars size={16} className="text-primary"/> {profile?.gender}</div>
-            </div>
+              <div className="flex justify-center gap-2 mb-10">
+                {[1, 2, 3, 4, 5].map(s => (
+                  <motion.button
+                    key={s}
+                    whileHover={{ scale: 1.2 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => setRating(s)}
+                    onMouseEnter={() => setHoverRating(s)}
+                    onMouseLeave={() => setHoverRating(0)}
+                    className="p-1 focus:outline-none"
+                  >
+                    <Star
+                      size={32}
+                      fill={(hoverRating || rating) >= s ? '#FFC107' : 'none'}
+                      className={(hoverRating || rating) >= s ? 'text-[#FFC107]' : 'text-gray-200'}
+                    />
+                  </motion.button>
+                ))}
+              </div>
 
-            <div className="glass-card" style={{ marginTop: '20px', padding: '18px' }}>
-              <h3 style={{ marginBottom: '10px' }}>Rider Reputation</h3>
-              <p style={{ fontSize: '1.2rem', fontWeight: 700, margin: '0 0 6px' }}>
-                {ratingCount === 0 ? 'No ratings yet' : `${averageRating.toFixed(1)} / 5`}
-              </p>
-              <p className="text-sm text-muted" style={{ marginBottom: '12px' }}>
-                {ratingCount} rating{ratingCount === 1 ? '' : 's'} received
-              </p>
-              {receivedRatings.length > 0 && (
-                <div style={{ display: 'grid', gap: '12px' }}>
-                  {receivedRatings.slice(0, 3).map((ratingItem: any) => (
-                    <div key={ratingItem.uuid || ratingItem.id || `${ratingItem.rater_id}-${ratingItem.created_at}`} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '12px' }}>
-                      <p style={{ margin: 0, fontWeight: 600 }}>{ratingItem.rater_name || 'Rider'}</p>
-                      <p className="text-muted" style={{ margin: '4px 0 6px' }}>Score: {ratingItem.score}/5</p>
-                      {ratingItem.comments && <p style={{ margin: 0, fontSize: '0.9rem' }}>&quot;{ratingItem.comments}&quot;</p>}
-                    </div>
-                  ))}
+              <button
+                className="btn-primary w-full h-[60px] text-lg disabled:bg-gray-100 disabled:text-gray-400"
+                onClick={confirmDissolve}
+                disabled={rating === 0}
+              >
+                Save & Finish
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex flex-col lg:flex-row gap-12">
+
+        {/* ── LEFT: USER CARD ── */}
+        <aside className="lg:w-80 shrink-0">
+          <div className="bg-white rounded-3xl border border-gray-100 p-8 shadow-lg sticky top-24">
+            <div className="text-center mb-10">
+              <div className="relative inline-block mb-6">
+                <div className="w-24 h-24 bg-[#121212] rounded-3xl flex items-center justify-center overflow-hidden border-4 border-primary shadow-xl">
+                  <User size={48} className="text-[#FFC107]" />
                 </div>
-              )}
+                <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-black-rich text-[#FFC107] rounded-xl flex items-center justify-center border-2 border-white shadow-lg">
+                  <ShieldCheck size={16} />
+                </div>
+              </div>
+              <h2 className="text-2xl font-black text-[#121212] tracking-tighter mb-1">{profile?.name}</h2>
+              <div className="flex items-center justify-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#FFC107] italic">
+                Verified Captain
+              </div>
             </div>
 
-            <button className="btn btn-outline w-full" style={{ color: '#ff4d4d', borderColor: '#ff4d4d' }} onClick={() => supabase.auth.signOut().then(() => navigate('/auth'))}>
+            <div className="flex flex-col gap-5 pt-8 border-t border-gray-50 mb-10">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+                  <Mail size={16} />
+                </div>
+                <span className="text-sm font-bold text-[#121212] truncate">{profile?.email}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+                  <Phone size={16} />
+                </div>
+                <span className="text-sm font-bold text-[#121212]">{profile?.phone_number}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+                  <VenusAndMars size={16} />
+                </div>
+                <span className="text-sm font-bold text-[#121212]">{profile?.gender}</span>
+              </div>
+            </div>
+
+            {/* Rep Stat */}
+            <div className="bg-[#121212] rounded-2xl p-6 text-white text-center relative overflow-hidden group mb-8">
+              <TrendingUp className="absolute -bottom-2 -right-2 text-white/5 group-hover:scale-110 transition-transform duration-500" size={100} />
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#FFC107] mb-2">Reputation</p>
+              <div className="text-4xl font-black italic mb-1">
+                {ratingCount === 0 ? '--' : averageRating.toFixed(1)}
+              </div>
+              <p className="text-[10px] font-bold text-gray-500">{ratingCount} Feedbacks</p>
+            </div>
+
+            <button
+              onClick={() => supabase.auth.signOut().then(() => navigate('/auth'))}
+              className="w-full flex items-center justify-center gap-3 py-4 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-red-500 transition-colors"
+            >
               <LogOut size={16} /> Sign Out
             </button>
           </div>
         </aside>
 
-        {/* ── RIGHT: POOLS & HISTORY ── */}
-        <main className="flex-col gap-10">
+        {/* ── RIGHT: CONTENT AREA ── */}
+        <main className="flex-1">
           {notification && (
-            <div className="glass-card" style={{ borderLeft: '5px solid #f59e0b', padding: '16px' }}>
-              <p style={{ margin: 0, fontWeight: 600 }}>🔔 {notification}</p>
-            </div>
+            <motion.div
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              className="bg-[#FFC107]/10 border border-primary/20 p-4 rounded-2xl mb-8 flex items-center gap-3"
+            >
+              <div className="w-2 h-2 bg-[#FFC107] rounded-full animate-ping" />
+              <p className="text-xs font-black text-accent-yellow">{notification}</p>
+            </motion.div>
           )}
 
-          {/* ACTIVE POOLS */}
-          <section>
-            <h2 className="mb-6 flex items-center gap-3">🚀 Active Ride Pools</h2>
-            {activePools.length === 0 ? <p className="text-muted glass-card text-center py-10">You have no active pools. Create one to start riding!</p> : 
-              activePools.map(pool => {
-                const pendingRequests = pendingRequestsByPool[pool.id] || [];
-                return (
-                  <div key={pool.id} className="glass-card mb-6" style={{ borderLeft: '5px solid var(--primary)' }}>
-                    <div className="flex justify-between items-start mb-6">
-                      <div>
-                        <h3 style={{ fontSize: '1.3rem', marginBottom: '6px' }}>{pool.source_text} → {pool.dest_text}</h3>
-                        <p className="text-sm text-primary flex items-center gap-2">
-                          <Calendar size={14}/> Departure: {new Date(pool.time_window_start).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                        </p>
-                        <p className="text-sm text-muted" style={{ marginTop: '6px' }}>
-                          {pool.available_seats} seats remaining · Status: {pool.status?.toUpperCase()}
-                        </p>
-                      </div>
-                      <span className="badge badge-indigo">{pool.mode_of_transport}</span>
-                    </div>
+          {/* TABS */}
+          <div className="flex gap-8 mb-12 border-b border-gray-100 overflow-x-auto whitespace-nowrap scrollbar-none pb-1">
+            {(['ongoing', 'history', 'reviews'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`relative pb-4 text-sm font-black uppercase tracking-widest transition-colors ${activeTab === tab ? 'text-[#121212]' : 'text-gray-300'}`}
+              >
+                {tab}
+                {activeTab === tab && (
+                  <motion.div
+                    layoutId="profile-tab-active"
+                    className="absolute bottom-0 left-0 w-full h-1 bg-[#FFC107] rounded-full"
+                  />
+                )}
+              </button>
+            ))}
+          </div>
 
-                    <div className="flex gap-3 flex-wrap" style={{ marginBottom: '16px' }}>
-                      <button className="btn btn-primary flex-1 gap-2" style={{ padding: '14px', minWidth: '210px' }} onClick={() => navigate(`/chat/${pool.id}`)}>
-                        <MessageSquare size={20} /> Open Chat
-                      </button>
-                      <button className="btn btn-outline flex-1" style={{ borderColor: '#ef4444', color: '#ef4444', minWidth: '210px' }} onClick={() => handleEndPool(pool.id)}>
-                        End Pool
-                      </button>
-                      <button className="btn btn-outline flex-1" style={{ minWidth: '210px' }} onClick={() => loadRequestsForPool(pool.id)}>
-                        View {pendingRequests.length} Pending Request{pendingRequests.length === 1 ? '' : 's'}
-                      </button>
-                    </div>
-                    {pendingRequests.length > 0 && (
-                      <p style={{ marginTop: '0', color: '#a3a3a3' }}>
-                        {pendingRequests.length} pending join request{pendingRequests.length === 1 ? '' : 's'} waiting for review.
-                      </p>
-                    )}
-
-                    {reviewingPoolId === pool.id && (
-                      <div className="glass-card" style={{ background: 'rgba(255,255,255,0.03)', padding: '16px' }}>
-                        <h4 style={{ marginBottom: '12px' }}>Pending Requests</h4>
-                        {requestPanel.length === 0 ? (
-                          <p className="text-muted">No pending requests for this pool.</p>
-                        ) : (
-                          requestPanel.map((req: any) => (
-                            <div key={req.id} className="glass-card mb-3" style={{ padding: '14px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                              <div className="flex justify-between items-start mb-2">
-                                <div>
-                                  <p style={{ margin: 0, fontWeight: 600 }}>{req.user_profiles?.name || 'Unknown Passenger'}</p>
-                                  <p className="text-xs text-muted" style={{ margin: '4px 0' }}>Requested at {new Date(req.created_at).toLocaleString()}</p>
-                                </div>
-                                <span className="badge badge-blue">Score {Number(req.heuristic_score || 0).toFixed(1)}</span>
-                              </div>
-                              <p style={{ margin: '8px 0' }}>Route: {req.requester_source_lat}, {req.requester_source_lng} → {req.requester_dest_lat}, {req.requester_dest_lng}</p>
-                              <div className="flex gap-2">
-                                <button className="btn btn-primary flex-1" onClick={() => respondToRequest(req.id, pool.id, true)}>
-                                  Accept
-                                </button>
-                                <button className="btn btn-outline flex-1" onClick={() => respondToRequest(req.id, pool.id, false)}>
-                                  Reject
-                                </button>
-                              </div>
+          <AnimatePresence mode="wait">
+            {activeTab === 'ongoing' && (
+              <motion.div
+                key="ongoing"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="flex flex-col gap-8"
+              >
+                {activePools.length === 0 ? (
+                  <div className="bg-gray-50 rounded-[2.5rem] py-20 px-6 text-center border-2 border-dashed border-gray-100">
+                    <p className="text-gray-400 font-bold">No active pools. Ready to host one?</p>
+                    <button
+                      onClick={() => navigate('/create-pool')}
+                      className="btn-outline mt-6"
+                    >
+                      Host a Ride
+                    </button>
+                  </div>
+                ) : (
+                  activePools.map(pool => {
+                    const pendingRequests = pendingRequestsByPool[pool.id] || [];
+                    return (
+                      <div key={pool.id} className="bg-white rounded-3xl border border-gray-100 p-8 shadow-lg group">
+                        <div className="flex flex-col md:flex-row justify-between md:items-start gap-6 mb-8">
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${pool.status === 'full' ? 'bg-orange-100 text-orange-600' : 'bg-[#FFC107]/20 text-accent-yellow'}`}>
+                                {pool.status}
+                              </span>
+                              <span className="text-gray-300">•</span>
+                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{pool.mode_of_transport}</span>
                             </div>
-                          ))
+                            <h3 className="text-2xl font-black text-[#121212] tracking-tighter mb-2">{pool.source_text} <ChevronRight className="inline mx-1 text-[#FFC107]" /> {pool.dest_text}</h3>
+                            <p className="text-sm font-bold text-gray-400 flex items-center gap-2">
+                              <Calendar size={14} className="text-[#FFC107]" />
+                              {new Date(pool.time_window_start).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => navigate(`/chat/${pool.id}`)}
+                              className="w-12 h-12 bg-[#121212] text-[#FFC107] rounded-xl flex items-center justify-center hover:scale-110 transition-transform"
+                            >
+                              <MessageSquare size={20} />
+                            </button>
+                            <button
+                              onClick={() => handleEndPool(pool.id)}
+                              className="px-6 h-12 bg-red-50 text-red-500 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                            >
+                              End Ride
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col md:flex-row gap-4">
+                          <button
+                            onClick={() => loadRequestsForPool(pool.id)}
+                            className="flex-1 px-8 h-16 bg-gray-50 rounded-2xl flex items-center justify-between group-hover:bg-[#FFC107]/5 transition-colors group/btn"
+                          >
+                            <span className="text-[#121212] font-black tracking-tighter">
+                              {pendingRequests.length} Pending Requests
+                            </span>
+                            <ChevronRight className="text-gray-300 group-hover/btn:translate-x-1 transition-transform" />
+                          </button>
+                        </div>
+
+                        {reviewingPoolId === pool.id && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            className="mt-8 pt-8 border-t border-gray-50 grid grid-cols-1 md:grid-cols-2 gap-4"
+                          >
+                            {requestPanel.length === 0 ? (
+                              <p className="text-xs font-bold text-gray-400 italic col-span-2">No pending requests found in the records.</p>
+                            ) : (
+                              requestPanel.map((req: any) => (
+                                <div key={req.id} className="bg-gray-50/50 rounded-2xl p-6 border border-gray-100">
+                                  <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-gray-100">
+                                      <User size={20} className="text-gray-300" />
+                                    </div>
+                                    <div>
+                                      <h4 className="font-black text-[#121212] text-sm">{req.user_profiles?.name || 'Rider'}</h4>
+                                      <p className="text-[10px] font-bold text-gray-400">Match Accuracy: {Number(req.heuristic_score || 0).toFixed(0)}%</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => respondToRequest(req.id, true)}
+                                      className="flex-1 py-3 bg-[#121212] text-[#FFC107] rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-transform"
+                                    >
+                                      Accept
+                                    </button>
+                                    <button
+                                      onClick={() => respondToRequest(req.id, false)}
+                                      className="flex-1 py-3 bg-white border border-gray-100 text-gray-400 rounded-xl font-black text-[10px] uppercase tracking-widest hover:text-red-500 transition-colors"
+                                    >
+                                      Reject
+                                    </button>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </motion.div>
                         )}
                       </div>
-                    )}
-                  </div>
-                );
-              })
-            }
-          </section>
+                    );
+                  })
+                )}
+              </motion.div>
+            )}
 
-          {/* DISSOLVED HISTORY WITH FULL TIME DATA */}
-          <section>
-            <h2 className="mb-6 flex items-center gap-3 text-muted"><History size={24}/> Ride History</h2>
-            {historyPools.length === 0 ? <p className="text-muted">No ride history available.</p> : 
-              historyPools.map(pool => (
-                <div key={pool.id} className="glass-card mb-4" style={{ opacity: 0.8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div className="flex justify-between items-start">
-                    <div className="flex-col gap-2">
-                      <p className="font-bold text-lg">{pool.source_text} to {pool.dest_text}</p>
-                      
-                      {/* Detailed Timestamps */}
-                      <div className="flex-col gap-1 mt-2">
-                        <p className="text-xs text-muted flex items-center gap-2">
-                          <Clock size={12}/> **Created:** {new Date(pool.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                        </p>
-                        <p className="text-xs text-muted flex items-center gap-2">
-                          <CheckCircle size={12}/> **Departed:** {new Date(pool.time_window_start).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                        </p>
+            {activeTab === 'history' && (
+              <motion.div
+                key="history"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="flex flex-col gap-4"
+              >
+                {historyPools.length === 0 ? (
+                  <p className="text-gray-400 font-bold p-10 text-center">Empty roads ahead. Your history starts here.</p>
+                ) : (
+                  historyPools.map(pool => (
+                    <div key={pool.id} className="bg-white rounded-3xl border border-gray-50 p-6 flex items-center justify-between group hover:border-primary/20 transition-all opacity-80 hover:opacity-100">
+                      <div className="flex items-center gap-6">
+                        <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-300 group-hover:bg-[#FFC107]/10 group-hover:text-[#FFC107] transition-colors">
+                          <CheckCircle size={24} />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-[#121212] tracking-tighter truncate max-w-[200px] md:max-w-md">{pool.source_text} → {pool.dest_text}</h4>
+                          <p className="text-xs font-bold text-gray-400">{new Date(pool.created_at).toLocaleDateString()}</p>
+                        </div>
                       </div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex gap-0.5">
+                          {[...Array(5)].map((_, i) => (
+                            <Star key={i} size={12} className={i < (pool.rating || 0) ? 'text-[#FFC107] fill-primary' : 'text-gray-100'} />
+                          ))}
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-300 hidden md:block">Completed</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </motion.div>
+            )}
 
-                      <div className="flex text-yellow-500 mt-3">
+            {activeTab === 'reviews' && (
+              <motion.div
+                key="reviews"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-6"
+              >
+                {receivedRatings.length === 0 ? (
+                  <p className="text-gray-400 font-bold p-10 text-center col-span-2">No reviews yet. Be a great buddy to earn stars!</p>
+                ) : (
+                  receivedRatings.map((ratingItem: any) => (
+                    <div key={ratingItem.id} className="bg-white rounded-3xl p-8 border border-gray-100 relative shadow-sm">
+                      <div className="absolute top-8 right-8 flex gap-0.5">
                         {[...Array(5)].map((_, i) => (
-                          <Star key={i} size={14} fill={i < (pool.rating || 0) ? 'currentColor' : 'none'} />
+                          <Star key={i} size={10} className={i < (ratingItem.score || 0) ? 'text-[#FFC107] fill-primary' : 'text-gray-100'} />
                         ))}
                       </div>
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center font-black text-gray-400 text-xs">
+                          {ratingItem.rater_name?.charAt(0) || 'R'}
+                        </div>
+                        <div>
+                          <h4 className="font-black text-[#121212] tracking-tighter text-sm">{ratingItem.rater_name || 'Rider'}</h4>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{new Date(ratingItem.created_at).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                      {ratingItem.comments && (
+                        <p className="text-sm font-medium text-gray-500 italic leading-relaxed">
+                          "{ratingItem.comments}"
+                        </p>
+                      )}
                     </div>
-                    <div className="text-right">
-                      <span className="badge" style={{ background: '#222', color: '#888' }}>COMPLETED</span>
-                      <p className="text-xs text-muted mt-2">{pool.mode_of_transport}</p>
-                    </div>
-                  </div>
-                </div>
-              ))
-            }
-          </section>
-
-          <section>
-            <h2 className="mb-6 flex items-center gap-3 text-muted"><History size={24}/> Rider Reviews</h2>
-            {receivedRatings.length === 0 ? (
-              <p className="text-muted">No ratings received yet.</p>
-            ) : (
-              receivedRatings.map((ratingItem: any) => (
-                <div key={ratingItem.uuid || ratingItem.id || `${ratingItem.rater_id}-${ratingItem.created_at}`} className="glass-card mb-4" style={{ opacity: 0.9, background: 'rgba(255,255,255,0.04)' }}>
-                  <div className="flex justify-between items-center mb-2">
-                    <p style={{ margin: 0, fontWeight: 600 }}>{ratingItem.rater_name || 'Rider'}</p>
-                    <span className="badge badge-gray">{ratingItem.score} / 5</span>
-                  </div>
-                  {ratingItem.comments && <p className="text-muted" style={{ margin: '0 0 8px' }}>{ratingItem.comments}</p>}
-                  <p className="text-xs text-muted">{new Date(ratingItem.created_at).toLocaleString()}</p>
-                </div>
-              ))
+                  ))
+                )}
+              </motion.div>
             )}
-          </section>
+          </AnimatePresence>
         </main>
       </div>
-    </div>
+    </motion.div>
   );
 };
 

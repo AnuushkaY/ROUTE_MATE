@@ -1,46 +1,52 @@
 import { useState, type FormEvent } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Mail, Phone, Lock, User, ArrowLeft, CheckCircle2, ChevronRight, Car } from 'lucide-react';
 
 const Auth = () => {
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState(''); // New state for Phone
-  const [authMethod, setAuthMethod] = useState<'email' | 'phone'>('email'); // Toggle state
-  
+  const [phone, setPhone] = useState('');
+  const [authMethod, setAuthMethod] = useState<'email' | 'phone'>('email');
+
   const [otpToken, setOtpToken] = useState('');
   const [isTokenSent, setIsTokenSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  
+
   const [isNewUser, setIsNewUser] = useState(false);
   const [name, setName] = useState('');
   const [gender, setGender] = useState('');
+
+  const location = useLocation();
+  const navigate = useNavigate();
+  const from = location.state?.from?.pathname || "/";
 
   const handleAuth = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage('');
-    
+
     try {
       if (authMethod === 'email') {
-        // --- EMAIL OTP FLOW ---
         const { error } = await supabase.auth.signInWithOtp({
           email,
           options: {
-            data: { name, gender, phone_number: phone }, // Attach metadata
+            data: { name, gender, phone_number: phone },
+            emailRedirectTo: window.location.origin
           }
         });
         if (error) throw error;
-        setMessage('A 6-digit OTP has been sent to your email!');
+        setMessage('An 8-digit OTP has been sent to your email!');
       } else {
-        // --- PHONE OTP FLOW ---
         const { error } = await supabase.auth.signInWithOtp({
-          phone: phone, // Must be in E.164 format (e.g., +919876543210)
+          phone: phone,
           options: {
-            data: { name, gender, email: email }, // Attach metadata
+            data: { name, gender, email: email },
           }
         });
         if (error) throw error;
-        setMessage('An SMS OTP has been sent to your phone!');
+        setMessage('An 8-digit SMS code has been sent to your phone!');
       }
 
       setIsTokenSent(true);
@@ -56,17 +62,24 @@ const Auth = () => {
     setMessage('');
 
     try {
+      const code = otpToken.trim();
+      if (!/^\d{8}$/.test(code)) {
+        setMessage('Please enter the complete 8-digit code.');
+        setLoading(false);
+        return;
+      }
+
       let verifyResult;
       if (authMethod === 'email') {
         verifyResult = await supabase.auth.verifyOtp({
           email,
-          token: otpToken.trim(),
+          token: code,
           type: 'email'
         });
       } else {
         verifyResult = await supabase.auth.verifyOtp({
           phone,
-          token: otpToken.trim(),
+          token: code,
           type: 'sms'
         });
       }
@@ -74,18 +87,17 @@ const Auth = () => {
       const { error, data } = verifyResult;
       if (error) throw error;
 
-      // Upsert profile into public table
       if (data?.user) {
-         await supabase.from('user_profiles').upsert({
-             id: data.user.id,
-             name: data.user.user_metadata?.name || name || 'User',
-             gender: data.user.user_metadata?.gender || gender || 'Other',
-             email: data.user.email || email,
-             phone_number: data.user.phone || phone || '+910000000000'
-         });
+        await supabase.from('user_profiles').upsert({
+          id: data.user.id,
+          name: data.user.user_metadata?.name || name || 'User',
+          gender: data.user.user_metadata?.gender || gender || 'Other',
+          email: data.user.email || email,
+          phone_number: data.user.phone || phone || '+910000000000'
+        });
       }
 
-      setMessage('Successfully authenticated!');
+      navigate(from, { replace: true });
     } catch (err: any) {
       setMessage(err.message);
     }
@@ -93,119 +105,209 @@ const Auth = () => {
   };
 
   return (
-    <div className="container flex items-center justify-center" style={{ minHeight: 'calc(100vh - 80px)' }}>
-      <div className="glass-card" style={{ maxWidth: '400px', width: '100%' }}>
-        <h2 style={{ marginBottom: '24px', textAlign: 'center' }}>ROUTEMATE</h2>
-        
-        {message && (
-          <div style={{ padding: '12px', background: 'rgba(99, 102, 241, 0.2)', borderRadius: '8px', marginBottom: '16px', color: 'white', fontSize: '0.9rem' }}>
-            {message}
-          </div>
-        )}
-
-        {/* --- TOGGLE BETWEEN EMAIL AND PHONE --- */}
-        {!isTokenSent && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '24px' }}>
-            <button 
-              type="button" 
-              className={`btn ${authMethod === 'email' ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setAuthMethod('email')}
-              style={{ flex: 1, fontSize: '0.8rem' }}
-            >
-              Email OTP
-            </button>
-            <button 
-              type="button" 
-              className={`btn ${authMethod === 'phone' ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setAuthMethod('phone')}
-              style={{ flex: 1, fontSize: '0.8rem' }}
-            >
-              Phone OTP
-            </button>
-          </div>
-        )}
-
-        {!isTokenSent ? (
-          <form onSubmit={handleAuth}>
-            {authMethod === 'email' ? (
-              <div className="input-group">
-                <label>Email Address</label>
-                <input type="email" className="input-field" value={email} onChange={(e) => setEmail(e.target.value)} required />
-              </div>
-            ) : (
-              <div className="input-group">
-                <label>Phone Number (with +country code)</label>
-                <input type="tel" className="input-field" placeholder="+91..." value={phone} onChange={(e) => setPhone(e.target.value)} required />
-              </div>
-            )}
-
-            {/* Always show extra fields for New Users */}
-            {!isNewUser ? (
-               <div style={{ textAlign: 'right', marginBottom: '16px', fontSize: '0.85rem' }}>
-                 <a href="#" onClick={(e) => { e.preventDefault(); setIsNewUser(true); }}>New here? Sign Up</a>
-               </div>
-            ) : (
-              <>
-                <div className="input-group">
-                  <label>Full Name</label>
-                  <input type="text" className="input-field" value={name} onChange={(e) => setName(e.target.value)} required />
-                </div>
-                <div className="input-group">
-                  <label>Gender</label>
-                  <select className="input-field" value={gender} onChange={(e) => setGender(e.target.value)} required>
-                    <option value="" disabled>Select Gender</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-                {/* If using Email Auth, we need their phone for the profile */}
-                {authMethod === 'email' && (
-                   <div className="input-group">
-                     <label>Phone Number</label>
-                     <input type="tel" className="input-field" value={phone} onChange={(e) => setPhone(e.target.value)} required />
-                   </div>
-                )}
-                {/* If using Phone Auth, we need their email for the profile */}
-                {authMethod === 'phone' && (
-                   <div className="input-group">
-                     <label>Email Address</label>
-                     <input type="email" className="input-field" value={email} onChange={(e) => setEmail(e.target.value)} required />
-                   </div>
-                )}
-                <div style={{ textAlign: 'right', marginBottom: '16px', fontSize: '0.85rem' }}>
-                 <a href="#" onClick={(e) => { e.preventDefault(); setIsNewUser(false); }}>Already have an account? Log in</a>
-               </div>
-              </>
-            )}
-
-            <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
-              {loading ? 'Sending Code...' : 'Send OTP'}
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleVerifyOtp}>
-            <div className="input-group">
-              <label>Enter OTP Code</label>
-              <input 
-                type="text" className="input-field" value={otpToken} 
-                onChange={(e) => setOtpToken(e.target.value)} 
-                placeholder="123456" required 
-              />
-            </div>
-            <button type="submit" className="btn btn-primary" style={{ width: '100%', marginBottom: '12px' }} disabled={loading}>
-              {loading ? 'Verifying...' : 'Verify & Log In'}
-            </button>
-            <button 
-              type="button" className="btn btn-outline" style={{ width: '100%' }}
-              onClick={() => setIsTokenSent(false)}
-            >
-              Back
-            </button>
-          </form>
-        )}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-[#121212] flex items-center justify-center p-6"
+    >
+      {/* Background Icon Decoration */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-5">
+        <Car size={300} className="absolute -bottom-20 -left-20 text-white rotate-12" />
+        <Car size={200} className="absolute -top-10 -right-10 text-white -rotate-12" />
       </div>
-    </div>
+
+      <motion.div
+        initial={{ y: 20, scale: 0.95 }}
+        animate={{ y: 0, scale: 1 }}
+        className="w-full max-w-md relative z-10"
+      >
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center gap-2 mb-4">
+            <div className="w-8 h-8 bg-[#FFC107] rounded-lg flex items-center justify-center">
+              <Lock size={16} className="text-[#121212]" />
+            </div>
+            <span className="text-white font-black tracking-widest text-[10px] uppercase">Secure Access</span>
+          </div>
+          <h2 className="text-4xl font-black text-white tracking-tighter">
+            {isNewUser ? 'Join the ' : 'Welcome back to '}
+            <span className="text-[#FFC107] italic">RouteMate</span>
+          </h2>
+        </div>
+
+        <div className="bg-white rounded-[2.5rem] p-10 shadow-2xl relative overflow-hidden">
+          <AnimatePresence mode="wait">
+            {!isTokenSent ? (
+              <motion.form
+                key="auth-form"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                onSubmit={handleAuth}
+                className="flex flex-col gap-6"
+              >
+                {/* Method Toggle */}
+                <div className="flex p-1 bg-gray-100 rounded-2xl w-fit mx-auto mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMethod('email')}
+                    className={`px-6 py-2 rounded-xl text-xs font-black uppercase transition-all ${authMethod === 'email' ? 'bg-white text-[#121212] shadow-sm' : 'text-gray-400'}`}
+                  >
+                    Email
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMethod('phone')}
+                    className={`px-6 py-2 rounded-xl text-xs font-black uppercase transition-all ${authMethod === 'phone' ? 'bg-white text-[#121212] shadow-sm' : 'text-gray-400'}`}
+                  >
+                    Phone
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-5">
+                  {authMethod === 'email' ? (
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Email Address</label>
+                      <div className="relative">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18} />
+                        <input
+                          type="email"
+                          className="input-premium pl-12 bg-gray-50/50 border-gray-100"
+                          placeholder="name@example.com"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          required
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Mobile Number</label>
+                      <div className="relative">
+                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18} />
+                        <input
+                          type="tel"
+                          className="input-premium pl-12 bg-gray-50/50 border-gray-100"
+                          placeholder="+91 00000 00000"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {isNewUser && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      className="flex flex-col gap-5"
+                    >
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Full Name</label>
+                        <div className="relative">
+                          <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18} />
+                          <input
+                            type="text"
+                            className="input-premium pl-12 bg-gray-50/50 border-gray-100"
+                            placeholder="Rohan Sharma"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Gender</label>
+                        <select
+                          className="input-premium bg-gray-50/50 border-gray-100"
+                          value={gender}
+                          onChange={(e) => setGender(e.target.value)}
+                          required
+                        >
+                          <option value="">Select...</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-4 mt-4">
+                  <button type="submit" disabled={loading} className="btn-primary w-full h-[60px] text-lg group">
+                    {loading ? 'Sending...' : isNewUser ? 'Create Account' : 'Sign In'}
+                    <ChevronRight size={20} className="ml-2 group-hover:translate-x-1 transition-transform" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsNewUser(!isNewUser)}
+                    className="text-xs font-black uppercase tracking-widest text-gray-400 hover:text-[#121212] transition-colors"
+                  >
+                    {isNewUser ? 'Already a buddy? Login' : 'New here? Join us'}
+                  </button>
+                </div>
+              </motion.form>
+            ) : (
+              <motion.form
+                key="otp-form"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                onSubmit={handleVerifyOtp}
+                className="flex flex-col gap-8 text-center"
+              >
+                <div>
+                  <div className="w-16 h-16 bg-[#FFC107]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle2 size={32} className="text-[#FFC107]" />
+                  </div>
+                  <h3 className="text-xl font-black text-[#121212] tracking-tight">Code Sent!</h3>
+                  <p className="text-gray-400 text-sm font-medium">Please enter the 8-digit code we sent you.</p>
+                </div>
+
+                <div className="relative">
+                  <Lock className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-300" size={20} />
+                  <input
+                    type="text"
+                    className="w-full pl-16 pr-8 py-5 bg-gray-50 border border-gray-100 rounded-2xl text-2xl font-black tracking-[0.8em] text-center focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                    placeholder="00000000"
+                    maxLength={8}
+                    value={otpToken}
+                    onChange={(e) => setOtpToken(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                    required
+                  />
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <button type="submit" disabled={loading} className="btn-primary w-full h-[60px] text-lg">
+                    {loading ? 'Verifying...' : 'Finish & Drive'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsTokenSent(false)}
+                    className="flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-[#121212] transition-colors"
+                  >
+                    <ArrowLeft size={14} /> Change details
+                  </button>
+                </div>
+              </motion.form>
+            )}
+          </AnimatePresence>
+
+          {message && (
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="mt-6 p-4 bg-[#FFC107]/10 border border-primary/20 rounded-2xl flex gap-3 items-center text-xs font-bold text-accent-yellow"
+            >
+              <div className="w-2 h-2 rounded-full bg-[#FFC107] animate-pulse" />
+              {message}
+            </motion.div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 };
 

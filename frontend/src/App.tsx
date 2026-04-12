@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { supabase } from './lib/supabase';
 import Auth from './pages/Auth';
-import Home from './pages/Home';
+import Dashboard from './pages/Home';
 import CreatePool from './pages/CreatePool';
 import PoolChat from './pages/PoolChat';
 import Profile from './pages/Profile';
 import Security from './pages/Security';
+import HowItWorks from './pages/HowItWorks';
+import Navbar from './components/Navbar';
+import BottomNav from './components/BottomNav';
 
-function App() {
+function AppContent() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
     const loadSession = async () => {
@@ -35,37 +40,40 @@ function App() {
   }, []);
 
   if (loading) {
-    return <div className="flex container items-center justify-center" style={{height: '100vh'}}>Loading...</div>;
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-white">
+        <div className="w-16 h-16 border-4 border-gray-100 border-t-primary rounded-full animate-spin mb-4" />
+        <p className="text-[#121212] font-black tracking-widest text-xs uppercase animate-pulse">Initializing RouteMate...</p>
+      </div>
+    );
   }
 
   return (
+    <div className="min-h-screen bg-white pb-20 md:pb-0">
+      <Navbar session={session} compact={location.pathname === '/'} />
+
+      <AnimatePresence mode="wait">
+        <Routes location={location} key={location.pathname}>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/auth" element={!session ? <Auth /> : <Navigate to="/" />} />
+          <Route path="/create-pool" element={session ? <CreatePool /> : <Navigate to="/auth" />} />
+          <Route path="/chat/:poolId" element={session ? <PoolChat /> : <Navigate to="/auth" />} />
+          <Route path="/profile" element={session ? <Profile /> : <Navigate to="/auth" />} />
+          <Route path="/security" element={<Security />} />
+          <Route path="/how-it-works" element={<HowItWorks />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </Routes>
+      </AnimatePresence>
+
+      <BottomNav />
+    </div>
+  );
+}
+
+function App() {
+  return (
     <BrowserRouter>
-      <div className="navbar">
-        <Link to="/" className="logo">ROUTEMATE</Link>
-        <div className="flex gap-4 items-center">
-          {session ? (
-            <>
-              <Link to="/" style={{ color: 'var(--text-main)' }}>Home</Link>
-              <Link to="/profile" style={{ color: 'var(--text-main)' }}>Profile</Link>
-              <Link to="/security" style={{ color: 'var(--text-main)' }}>Security Rules</Link>
-              <button className="btn btn-outline" onClick={() => supabase.auth.signOut()} style={{ padding: '8px 16px' }}>
-                Sign Out
-              </button>
-            </>
-          ) : (
-            <Link to="/security" style={{ color: 'var(--text-main)' }}>Safety Protocols</Link>
-          )}
-        </div>
-      </div>
-      
-      <Routes>
-        <Route path="/" element={session ? <Home /> : <Navigate to="/auth" />} />
-        <Route path="/auth" element={!session ? <Auth /> : <Navigate to="/" />} />
-        <Route path="/create-pool" element={session ? <CreatePool /> : <Navigate to="/auth" />} />
-        <Route path="/chat/:poolId" element={session ? <PoolChat /> : <Navigate to="/auth" />} />
-        <Route path="/profile" element={session ? <Profile /> : <Navigate to="/auth" />} />
-        <Route path="/security" element={<Security />} />
-      </Routes>
+      <AppContent />
     </BrowserRouter>
   );
 }
