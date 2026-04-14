@@ -136,6 +136,7 @@ const Profile = () => {
     try {
       const response = await axios.post(`${API_BASE_URL}/pool_requests/${requestId}/respond`, {
         status: accept ? 'accepted' : 'rejected'
+        
       });
 
       if (response.data?.status === 'ok') {

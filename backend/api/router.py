@@ -150,18 +150,19 @@ async def get_pool_requests_scored(pool_id: str):
         print(f"Error fetching scored pool requests for pool {pool_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/pool_requests/{request_id}/respond")
-async def respond_to_pool_request(request_id: str, body: RequestResponse):
+@router.post("/api/pool_requests/{requestId}/respond")
+async def respond_to_pool_request(requestId: str, body: RequestResponse):
     if body.status not in ['accepted', 'rejected']:
         raise HTTPException(status_code=400, detail="Invalid request status")
 
     headers = get_headers()
     try:
         async with httpx.AsyncClient() as client:
-            req_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{request_id}"
+            req_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{requestId}"
             req_res = await client.get(req_url, headers=headers)
             req_res.raise_for_status()
             req_data = req_res.json()
+            print(f"DEBUG: Supabase returned: {req_data}")
             if not req_data:
                 raise HTTPException(status_code=404, detail="Request not found")
             request_record = req_data[0]
@@ -188,9 +189,9 @@ async def respond_to_pool_request(request_id: str, body: RequestResponse):
                 update_pool_url = f"{SUPABASE_URL}/rest/v1/pools?id=eq.{pool_id}"
                 await client.patch(update_pool_url, headers=headers, json=pool_update)
 
-            update_req_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{request_id}"
+            update_req_url = f"{SUPABASE_URL}/rest/v1/pool_requests?id=eq.{requestId}"
             await client.patch(update_req_url, headers=headers, json={"status": body.status})
 
-        return {"status": "ok", "request_id": request_id, "new_status": body.status}
+        return {"status": "ok", "request_id": requestId, "new_status": body.status}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

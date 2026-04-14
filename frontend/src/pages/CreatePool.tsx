@@ -56,7 +56,7 @@ const CreatePool = () => {
     capacity: 3,
     timeWindowStart: '',
     modeOfTransport: 'Car',
-    price: 50
+  
   });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -67,7 +67,7 @@ const CreatePool = () => {
     try {
       const res = await axios.get(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`,
-        { headers: { 'User-Agent': 'RouteMateApp/1.0' } }
+        
       );
       if (res.data && res.data.length > 0) {
         return { lat: parseFloat(res.data[0].lat), lng: parseFloat(res.data[0].lon) };
@@ -103,7 +103,7 @@ const CreatePool = () => {
         capacity: formData.capacity,
         available_seats: formData.capacity,
         mode_of_transport: formData.modeOfTransport,
-        price_per_seat: formData.price,
+       
         status: 'open'
       });
 
@@ -188,7 +188,7 @@ const CreatePool = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              
                 <div className="flex flex-col gap-3">
                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Seats</label>
                   <div className="relative">
@@ -217,20 +217,7 @@ const CreatePool = () => {
                   </select>
                 </div>
 
-                <div className="flex flex-col gap-3">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Price (₹)</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#FFC107] font-black">₹</span>
-                    <input
-                      type="number"
-                      className="input-premium pl-10"
-                      value={formData.price}
-                      onChange={e => setFormData({ ...formData, price: parseInt(e.target.value) })}
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
+                
 
               <div className="flex flex-col gap-3">
                 <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Departure Time</label>
