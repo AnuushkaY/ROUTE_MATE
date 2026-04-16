@@ -104,9 +104,9 @@ const PoolCard = ({ pool, compact = false }: PoolCardProps) => {
       className={`group relative bg-white rounded-3xl border border-gray-100 p-6 flex flex-col gap-6 cursor-pointer transition-all duration-300 ${compact ? 'p-4 rounded-2xl' : ''}`}
       onClick={() => navigate(`/chat/${pool.id}`)}
     >
-      {/* Price Badge */}
-      <div className="absolute top-6 right-6 px-4 py-2 bg-[#121212] text-[#FFC107] rounded-2xl font-black text-lg shadow-lg">
-        ₹{pool.price_per_seat}
+      {/* Mode Badge */}
+      <div className="absolute top-6 right-6 px-4 py-2 bg-[#121212] text-[#FFC107] rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg">
+        {pool.mode_of_transport || 'Car'}
       </div>
 
       {/* Creator Info */}
@@ -115,10 +115,10 @@ const PoolCard = ({ pool, compact = false }: PoolCardProps) => {
           <User className="text-[#FFC107]" size={24} />
         </div>
         <div>
-          <h4 className="font-black text-[#121212] leading-tight">{pool.creator_name || 'Verified Captain'}</h4>
+          <h4 className="font-black text-[#121212] leading-tight">{pool.creator_name}</h4>
           <div className="flex items-center gap-1 text-xs font-bold text-gray-400 uppercase tracking-tighter">
             <Star size={12} className="fill-primary text-[#FFC107]" />
-            <span>4.9 • Superhost</span>
+            <span>{pool.rating ? pool.rating : 'No ratings yet'}</span>
           </div>
         </div>
       </div>

@@ -249,9 +249,9 @@ const Home = () => {
               <AnimatedEmptyState />
             ) : (
               <div
-                className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-6 pr-2 custom-scrollbar scroll-smooth ${
+                className={`grid grid-cols-1 md:grid-cols-2 gap-6 pr-2 custom-scrollbar scroll-smooth ${
                   pools.length > 6
-                    ? 'max-h-[min(900px,70vh)] overflow-y-auto overscroll-y-contain'
+                    ? 'max-h-[820px] overflow-y-auto overscroll-y-contain'
                     : ''
                 }`}
               >
