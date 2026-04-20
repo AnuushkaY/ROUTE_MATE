@@ -20,34 +20,48 @@ const PoolChat = () => {
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const participantsRef = useRef<any[]>([]);
+
+  useEffect(() => {
+    participantsRef.current = participants;
+  }, [participants]);
 
   const loadPoolAndMembership = async () => {
     if (!poolId) return;
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) return;
 
     setCurrentUserId(user.id);
-    const { data: poolData } = await supabase.from('pools').select('*').eq('id', poolId).single();
+    
+    // Start fetching pool data and membership status in parallel
+    const [poolRes, membershipRes] = await Promise.all([
+      supabase.from('pools').select('*').eq('id', poolId).single(),
+      supabase.from('pool_requests')
+        .select('*')
+        .eq('pool_id', poolId)
+        .eq('requester_id', user.id)
+        .eq('status', 'accepted')
+    ]);
+
+    const poolData = poolRes.data;
     if (!poolData) {
       setLoading(false);
       return;
     }
 
     setPool(poolData);
+    
+    // Parallelize participant loading with membership checks
     await loadPoolParticipants(user.id, poolData.creator_id);
+    
     const creator = poolData.creator_id === user.id;
     setIsCreator(creator);
+    
     if (creator) {
       setIsMember(true);
     } else {
-      const { data: acceptedRequests } = await supabase
-        .from('pool_requests')
-        .select('*')
-        .eq('pool_id', poolId)
-        .eq('requester_id', user.id)
-        .eq('status', 'accepted');
-
-      const acceptedCount = (acceptedRequests || []).length;
+      const acceptedCount = (membershipRes.data || []).length;
       setIsMember(acceptedCount > 0);
     }
     setLoading(false);
@@ -55,21 +69,26 @@ const PoolChat = () => {
 
   const loadPoolParticipants = async (currentUserIdValue: string, creatorId: string) => {
     try {
-      const { data: acceptedRequests } = await supabase
-        .from('pool_requests')
-        .select('requester_id, user_profiles(name)')
-        .eq('pool_id', poolId)
-        .eq('status', 'accepted');
+      // Run both queries in parallel
+      const [requestsRes, creatorRes] = await Promise.all([
+        supabase
+          .from('pool_requests')
+          .select('requester_id, user_profiles(name)')
+          .eq('pool_id', poolId)
+          .eq('status', 'accepted'),
+        supabase
+          .from('user_profiles')
+          .select('id, name')
+          .eq('id', creatorId)
+          .single()
+      ]);
 
-      const creatorProfile = await supabase
-        .from('user_profiles')
-        .select('id, name')
-        .eq('id', creatorId)
-        .single();
+      const acceptedRequests = requestsRes.data;
+      const creatorProfile = creatorRes.data;
 
       const people: any[] = [];
-      if (creatorProfile.data && creatorProfile.data.id !== currentUserIdValue) {
-        people.push({ id: creatorProfile.data.id, name: creatorProfile.data.name || 'Creator', isCreator: true });
+      if (creatorProfile && creatorProfile.id !== currentUserIdValue) {
+        people.push({ id: creatorProfile.id, name: creatorProfile.name || 'Creator', isCreator: true });
       }
 
       (acceptedRequests || []).forEach((req: any) => {
@@ -123,10 +142,24 @@ const PoolChat = () => {
     };
     fetchMessages();
 
-    const chatChannel = supabase.channel(`chat:${poolId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pool_messages', filter: `pool_id=eq.${poolId}` }, async (payload) => {
-        const { data: profile } = await supabase.from('user_profiles').select('name').eq('id', payload.new.sender_id).single();
-        setMessages((prev) => [...prev, { ...payload.new, user_profiles: profile }]);
+    const chatChannel = supabase.channel(`chat_pool_${poolId}`)
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'pool_messages', 
+        filter: `pool_id=eq.${poolId}` 
+      }, (payload) => {
+        // Look up the name from our loaded participants OR use the existing payload info
+        // This is synchronized and instant.
+        setMessages((prev) => {
+          // Avoid duplicates (handles realtime echo of our own optimistic message)
+          if (prev.some(m => m.id === payload.new.id || (m.message === payload.new.message && m.sender_id === payload.new.sender_id && new Date(payload.new.created_at).getTime() - new Date(m.created_at).getTime() < 2000))) return prev;
+          
+          const sender = participantsRef.current.find(p => p.id === payload.new.sender_id);
+          const userName = sender ? sender.name : (payload.new.sender_id === currentUserId ? 'You' : 'Buddy');
+          
+          return [...prev, { ...payload.new, user_profiles: { name: userName } }];
+        });
       })
       .subscribe();
 
@@ -138,8 +171,26 @@ const PoolChat = () => {
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !currentUserId || (!isMember && !isCreator)) return;
-    const { error } = await supabase.from('pool_messages').insert({ pool_id: poolId, sender_id: currentUserId, message: newMessage.trim() });
-    if (!error) setNewMessage('');
+    
+    // OPTIMISTIC UPDATE: Instantly show message without waiting for DB
+    const msgText = newMessage.trim();
+    setNewMessage('');
+    const tempMsg = {
+      id: crypto.randomUUID(), // Temp ID
+      pool_id: poolId,
+      sender_id: currentUserId,
+      message: msgText,
+      created_at: new Date().toISOString(),
+      user_profiles: { name: 'You' }
+    };
+    setMessages(prev => [...prev, tempMsg]);
+
+    const { error } = await supabase.from('pool_messages').insert({ pool_id: poolId, sender_id: currentUserId, message: msgText });
+    if (error) {
+      console.error('Failed to send message:', error);
+      // Revert optimism if failed
+      setMessages(prev => prev.filter(m => m.id !== tempMsg.id));
+    }
   };
 
   if (loading) return (
@@ -221,7 +272,7 @@ const PoolChat = () => {
                     </div>
                     <span className="text-sm font-bold text-[#121212]">{p.name || 'Member'}</span>
                   </div>
-                  <button onClick={() => openRatingModal(p)} className="p-2 opacity-0 group-hover:opacity-100 text-[#FFC107] hover:scale-110 transition-all">
+                  <button onClick={() => openRatingModal(p)} className="p-2 text-[#FFC107] hover:scale-110 transition-all">
                     <Star size={16} />
                   </button>
                 </div>

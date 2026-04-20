@@ -9,8 +9,10 @@ import PoolChat from './pages/PoolChat';
 import Profile from './pages/Profile';
 import Security from './pages/Security';
 import HowItWorks from './pages/HowItWorks';
+import LearnMore from './pages/LearnMore';
 import Navbar from './components/Navbar';
 import BottomNav from './components/BottomNav';
+import ScrollToTop from './components/ScrollToTop';
 
 function AppContent() {
   const [session, setSession] = useState<any>(null);
@@ -50,17 +52,19 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-white pb-20 md:pb-0">
+      <ScrollToTop />
       <Navbar session={session} compact={location.pathname === '/'} />
 
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/auth" element={!session ? <Auth /> : <Navigate to="/" />} />
-          <Route path="/create-pool" element={session ? <CreatePool /> : <Navigate to="/auth" />} />
-          <Route path="/chat/:poolId" element={session ? <PoolChat /> : <Navigate to="/auth" />} />
-          <Route path="/profile" element={session ? <Profile /> : <Navigate to="/auth" />} />
+          <Route path="/create-pool" element={session ? <CreatePool /> : <Navigate to="/" />} />
+          <Route path="/chat/:poolId" element={session ? <PoolChat /> : <Navigate to="/" />} />
+          <Route path="/profile" element={session ? <Profile /> : <Navigate to="/" />} />
           <Route path="/security" element={<Security />} />
           <Route path="/how-it-works" element={<HowItWorks />} />
+          <Route path="/learn-more" element={<LearnMore />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </AnimatePresence>

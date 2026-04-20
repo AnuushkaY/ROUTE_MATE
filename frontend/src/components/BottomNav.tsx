@@ -9,8 +9,8 @@ const BottomNav = () => {
   const navItems = [
     { id: 'home', icon: Home, label: 'Home', path: '/' },
     { id: 'search', icon: Search, label: 'Search', path: '/#search' },
-    { id: 'rides', icon: Calendar, label: 'Rides', path: '/profile' }, // Simplified: Rides point to Profile/History
-    { id: 'profile', icon: User, label: 'Profile', path: '/profile' },
+    { id: 'rides', icon: Calendar, label: 'Rides', path: '/profile?view=rides' }, 
+    { id: 'profile', icon: User, label: 'Profile', path: '/profile?view=profile' },
   ];
 
   const handleNav = (path: string) => {

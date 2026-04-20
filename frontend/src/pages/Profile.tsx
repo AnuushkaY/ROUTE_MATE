@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   User, Star, LogOut, CheckCircle,
   MessageSquare, Phone, Mail, VenusAndMars, Calendar,
@@ -28,12 +28,18 @@ const Profile = () => {
   const [activeTab, setActiveTab] = useState<'ongoing' | 'history' | 'reviews'>('ongoing');
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const currentView = searchParams.get('view') || 'rides';
 
   const fetchRatingStats = async (userId: string) => {
     try {
+      // Use joined query to get rater names in a single request (Select Join)
       const { data } = await supabase
         .from('ratings')
-        .select('*')
+        .select(`
+          *,
+          rater:user_profiles!ratings_rater_id_fkey(name)
+        `)
         .eq('ratee_id', userId)
         .order('created_at', { ascending: false });
 
@@ -44,20 +50,9 @@ const Profile = () => {
         return;
       }
 
-      const raterIds = Array.from(new Set(data.map((ratingItem: any) => ratingItem.rater_id)));
-      const { data: raterProfiles } = await supabase
-        .from('user_profiles')
-        .select('id, name')
-        .in('id', raterIds);
-
-      const raterMap = new Map<string, string>();
-      (raterProfiles || []).forEach((profile: any) => {
-        raterMap.set(profile.id, profile.name || 'Rider');
-      });
-
       const enrichedRatings = data.map((ratingItem: any) => ({
         ...ratingItem,
-        rater_name: raterMap.get(ratingItem.rater_id) || 'Rider'
+        rater_name: ratingItem.rater?.name || 'Rider'
       }));
 
       setReceivedRatings(enrichedRatings);
@@ -72,49 +67,42 @@ const Profile = () => {
   const fetchFullProfileData = async () => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profileData } = await supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        if (profileData) setProfile(profileData);
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
+      if (!user) return;
 
-        await fetchRatingStats(user.id);
+      // Parallelize Profile, Ratings, Created Pools, and Joined Requests
+      const [profileRes, , poolsRes, requestsRes] = await Promise.all([
+        supabase.from('user_profiles').select('*').eq('id', user.id).single(),
+        fetchRatingStats(user.id),
+        supabase.from('pools').select('*').eq('creator_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('pool_requests').select('pool_id').eq('requester_id', user.id).eq('status', 'accepted')
+      ]);
 
-        const { data: createdPools } = await supabase
+      if (profileRes.data) setProfile(profileRes.data);
+      
+      let myPools = poolsRes.data || [];
+      const joinedRequests = requestsRes.data;
+
+      // If joined pools exist, fetch them in parallel with final processing if possible
+      // but here we need the IDs from joinedRequests first.
+      if (joinedRequests && joinedRequests.length > 0) {
+        const poolIds = joinedRequests.map(r => r.pool_id);
+        const { data: joinedPools } = await supabase
           .from('pools')
           .select('*')
-          .eq('creator_id', user.id)
+          .in('id', poolIds)
           .order('created_at', { ascending: false });
-
-        const { data: joinedRequests } = await supabase
-          .from('pool_requests')
-          .select('pool_id')
-          .eq('requester_id', user.id)
-          .eq('status', 'accepted');
-
-        let myPools = createdPools || [];
-
-        if (joinedRequests && joinedRequests.length > 0) {
-           const poolIds = joinedRequests.map(r => r.pool_id);
-           const { data: joinedPools } = await supabase
-             .from('pools')
-             .select('*')
-             .in('id', poolIds)
-             .order('created_at', { ascending: false });
-           
-           if (joinedPools) {
-              const existingIds = new Set(myPools.map(p => p.id));
-              const newPools = joinedPools.filter(p => !existingIds.has(p.id));
-              myPools = [...myPools, ...newPools];
-              myPools.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-           }
-        }
         
-        setPools(myPools);
+        if (joinedPools) {
+          const existingIds = new Set(myPools.map(p => p.id));
+          const newPools = joinedPools.filter(p => !existingIds.has(p.id));
+          myPools = [...myPools, ...newPools];
+          myPools.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        }
       }
+      
+      setPools(myPools);
     } catch (err) {
       console.error('fetchFullProfileData failed', err);
     } finally {
@@ -156,9 +144,10 @@ const Profile = () => {
     }
   };
 
-  const respondToRequest = async (requestId: string, accept: boolean) => {
+  const respondToRequest = async (requestId: string, accept: boolean, score?: number) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
       if (!user) {
         setNotification('Session expired. Please log in.');
         return;
@@ -205,9 +194,14 @@ const Profile = () => {
         if (updatePoolError) throw updatePoolError;
       }
 
+      const reqUpdate: any = { status: accept ? 'accepted' : 'rejected' };
+      if (accept && score !== undefined) {
+         reqUpdate.heuristic_score = score;
+      }
+
       const { error: updateReqError } = await supabase
         .from('pool_requests')
-        .update({ status: accept ? 'accepted' : 'rejected' })
+        .update(reqUpdate)
         .eq('id', requestId);
 
       if (updateReqError) throw updateReqError;
@@ -327,7 +321,7 @@ const Profile = () => {
       <div className="flex flex-col lg:flex-row gap-12">
 
         {/* ── LEFT: USER CARD ── */}
-        <aside className="lg:w-80 shrink-0">
+        <aside className={`lg:w-80 shrink-0 ${currentView !== 'profile' ? 'hidden lg:block' : ''}`}>
           <div className="bg-white rounded-3xl border border-gray-100 p-8 shadow-lg sticky top-24">
             <div className="text-center mb-10">
               <div className="relative inline-block mb-6">
@@ -351,12 +345,17 @@ const Profile = () => {
                 </div>
                 <span className="text-sm font-bold text-[#121212] truncate">{profile?.email}</span>
               </div>
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
-                  <Phone size={16} />
+              {profile?.phone_number && 
+               profile.phone_number.trim() !== '' && 
+               profile.phone_number !== '+910000000000' && 
+               profile.phone_number !== '0000000000' && (
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
+                    <Phone size={16} />
+                  </div>
+                  <span className="text-sm font-bold text-[#121212]">{profile.phone_number}</span>
                 </div>
-                <span className="text-sm font-bold text-[#121212]">{profile?.phone_number}</span>
-              </div>
+              )}
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-gray-50 rounded-lg flex items-center justify-center text-gray-400">
                   <VenusAndMars size={16} />
@@ -376,7 +375,7 @@ const Profile = () => {
             </div>
 
             <button
-              onClick={() => supabase.auth.signOut().then(() => navigate('/auth'))}
+              onClick={() => supabase.auth.signOut().then(() => navigate('/'))}
               className="w-full flex items-center justify-center gap-3 py-4 text-xs font-black uppercase tracking-widest text-gray-400 hover:text-red-500 transition-colors"
             >
               <LogOut size={16} /> Sign Out
@@ -385,7 +384,7 @@ const Profile = () => {
         </aside>
 
         {/* ── RIGHT: CONTENT AREA ── */}
-        <main className="flex-1">
+        <main className={`flex-1 ${currentView !== 'rides' ? 'hidden lg:block' : ''}`}>
           {notification && (
             <motion.div
               initial={{ x: 20, opacity: 0 }}
@@ -518,7 +517,7 @@ const Profile = () => {
                             </div>
                             <div className="flex gap-2">
                               <button
-                                onClick={() => respondToRequest(req.id, true)}
+                                onClick={() => respondToRequest(req.id, true, req.heuristic_score)}
                                 className="flex-1 py-3 bg-[#121212] text-[#FFC107] rounded-xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-transform"
                               >
                                 Accept

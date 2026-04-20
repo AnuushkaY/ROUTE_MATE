@@ -1,7 +1,9 @@
 import { motion } from 'framer-motion';
 import { ShieldCheck, UserCheck, AlertTriangle, Lock, Shield, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const Security = () => {
+  const navigate = useNavigate();
   const protocols = [
     {
       icon: UserCheck,
@@ -91,8 +93,8 @@ const Security = () => {
         <p className="text-gray-400 font-bold mb-12 max-w-xl mx-auto">
           If you ever feel unsafe or notice suspicious behavior, our live reporting system is always one tap away.
         </p>
-        <button className="btn-primary px-12 h-16 text-lg">
-          View Full Safety Guide
+        <button onClick={() => navigate('/#search')} className="btn-primary px-12 h-16 text-lg">
+          Start Searching for Pools Now
         </button>
       </motion.div>
 

@@ -4,6 +4,19 @@ import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { CheckCircle, Loader, Navigation, MapPin, Users, Car, Clock, ChevronRight, ArrowLeft } from 'lucide-react';
+import LocationAutocomplete from '../components/LocationAutocomplete';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+
+const customUserIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 
@@ -49,14 +62,34 @@ const encodeGeohash = (lat: number, lng: number, precision: number = 6): string 
   return geohash;
 };
 
+const MapController = ({ lat, lng }: { lat: number; lng: number }) => {
+  const map = useMap();
+  React.useEffect(() => {
+    map.invalidateSize();
+    map.setView([lat, lng], 15, { animate: true });
+  }, [lat, lng, map]);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [map]);
+
+  return null;
+};
+
 const CreatePool = () => {
   const [formData, setFormData] = useState({
     sourceText: '',
+    sourceLat: 0,
+    sourceLng: 0,
     destText: '',
+    destLat: 0,
+    destLng: 0,
     capacity: 3,
     timeWindowStart: '',
     modeOfTransport: 'Car',
-  
   });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -84,11 +117,19 @@ const CreatePool = () => {
     setError('');
 
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      const { data: { session }, error: authError } = await supabase.auth.getSession();
+      const user = session?.user;
       if (authError || !user) throw new Error('You must be logged in to create a pool.');
 
-      const sourceCoords = await handleGeocode(formData.sourceText);
-      const destCoords = await handleGeocode(formData.destText);
+      let sourceCoords = { lat: formData.sourceLat, lng: formData.sourceLng };
+      let destCoords = { lat: formData.destLat, lng: formData.destLng };
+      
+      if (!sourceCoords.lat || !sourceCoords.lng) {
+        sourceCoords = await handleGeocode(formData.sourceText);
+      }
+      if (!destCoords.lat || !destCoords.lng) {
+        destCoords = await handleGeocode(formData.destText);
+      }
 
       const { error: poolError } = await supabase.from('pools').insert({
         creator_id: user.id,
@@ -103,7 +144,6 @@ const CreatePool = () => {
         capacity: formData.capacity,
         available_seats: formData.capacity,
         mode_of_transport: formData.modeOfTransport,
-       
         status: 'open'
       });
 
@@ -159,32 +199,42 @@ const CreatePool = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="flex flex-col gap-3">
                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Starting Point</label>
-                  <div className="relative">
-                    <Navigation className="absolute left-4 top-1/2 -translate-y-1/2 text-[#FFC107]" size={18} />
-                    <input
-                      type="text"
-                      className="input-premium pl-12"
-                      placeholder="e.g. Bandra Station"
-                      value={formData.sourceText}
-                      onChange={e => setFormData({ ...formData, sourceText: e.target.value })}
-                      required
-                    />
-                  </div>
+                  <LocationAutocomplete
+                    value={formData.sourceText}
+                    onChange={(val) => setFormData(prev => ({ ...prev, sourceText: val }))}
+                    onSelectLocation={(lat, lng, name) => setFormData(prev => ({ ...prev, sourceLat: lat, sourceLng: lng }))}
+                    placeholder="e.g. Bandra Station"
+                    icon={<Navigation className="text-[#FFC107]" size={18} />}
+                  />
+                  {formData.sourceLat !== 0 && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: '140px' }} className="w-full rounded-2xl overflow-hidden border border-gray-100 mt-2 isolate">
+                      <MapContainer center={[formData.sourceLat, formData.sourceLng]} zoom={15} scrollWheelZoom={false} className="h-full w-full">
+                        <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+                        <Marker position={[formData.sourceLat, formData.sourceLng]} icon={customUserIcon} />
+                        <MapController lat={formData.sourceLat} lng={formData.sourceLng} />
+                      </MapContainer>
+                    </motion.div>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-3">
                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Destination</label>
-                  <div className="relative">
-                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-[#FFC107]" size={18} />
-                    <input
-                      type="text"
-                      className="input-premium pl-12"
-                      placeholder="e.g. Nariman Point"
-                      value={formData.destText}
-                      onChange={e => setFormData({ ...formData, destText: e.target.value })}
-                      required
-                    />
-                  </div>
+                  <LocationAutocomplete
+                    value={formData.destText}
+                    onChange={(val) => setFormData(prev => ({ ...prev, destText: val }))}
+                    onSelectLocation={(lat, lng, name) => setFormData(prev => ({ ...prev, destLat: lat, destLng: lng }))}
+                    placeholder="e.g. Nariman Point"
+                    icon={<MapPin className="text-[#FFC107]" size={18} />}
+                  />
+                  {formData.destLat !== 0 && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: '140px' }} className="w-full rounded-2xl overflow-hidden border border-gray-100 mt-2 isolate">
+                      <MapContainer center={[formData.destLat, formData.destLng]} zoom={15} scrollWheelZoom={false} className="h-full w-full">
+                        <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+                        <Marker position={[formData.destLat, formData.destLng]} icon={customUserIcon} />
+                        <MapController lat={formData.destLat} lng={formData.destLng} />
+                      </MapContainer>
+                    </motion.div>
+                  )}
                 </div>
               </div>
 

@@ -7,15 +7,15 @@ def calculate_heuristic_score(
     req_source: tuple, req_dest: tuple, req_time: str
 ) -> float:
     """
-    Formula: 0.3*source + 0.25*destination(include direction part also cosine rule) + 0.3*time window (max+-of 30 min)
-    Total base is 0.85
+    Formula: 0.35*source + 0.35*destination(include direction part also cosine rule) + 0.30*time window (max+-of 30 min)
+    Total base is 1.0 (100%)
     """
-    # 1. Source score (max 0.3)
-    # Let's say if distance is 0km -> 0.3, if > 5km -> 0
+    # 1. Source score (max 0.35)
+    # Let's say if distance is 0km -> 0.35, if > 5km -> 0
     source_dist = haversine_distance(pool_source[0], pool_source[1], req_source[0], req_source[1])
-    source_score = max(0, 0.3 * (1 - (source_dist / 5.0)))
+    source_score = max(0, 0.35 * (1 - (source_dist / 5.0)))
     
-    # 2. Destination score (max 0.25)
+    # 2. Destination score (max 0.35)
     dest_dist = haversine_distance(pool_dest[0], pool_dest[1], req_dest[0], req_dest[1])
     # Cosine direction (simplistic approximation using vectors)
     # Vector of Pool: P_dest - P_src
@@ -43,9 +43,9 @@ def calculate_heuristic_score(
     # Dest match decays up to 5km
     dest_proximity = max(0, 1 - (dest_dist / 5.0))
     
-    dest_score = 0.25 * ((dest_proximity * 0.7) + (direction_match * 0.3))
+    dest_score = 0.35 * ((dest_proximity * 0.7) + (direction_match * 0.3))
     
-    # 3. Time window score (max 0.3 => +- 30 min)
+    # 3. Time window score (max 0.30 => +- 30 min)
     try:
         pt = datetime.fromisoformat(pool_time.replace('Z', '+00:00'))
         rt = datetime.fromisoformat(req_time.replace('Z', '+00:00'))
@@ -53,7 +53,7 @@ def calculate_heuristic_score(
         time_diff_minutes = abs((pt - rt).total_seconds()) / 60.0
         
         if time_diff_minutes <= 30:
-            time_score = 0.3 * (1 - (time_diff_minutes / 30.0))
+            time_score = 0.30 * (1 - (time_diff_minutes / 30.0))
         else:
             time_score = 0.0
     except Exception:
@@ -63,6 +63,6 @@ def calculate_heuristic_score(
     total_score = source_score + dest_score + time_score
     
     # Normalize to 1.0 (out of 100%)
-    final_score = (total_score / 0.85) * 100
+    final_score = total_score * 100
     
     return round(final_score, 2)

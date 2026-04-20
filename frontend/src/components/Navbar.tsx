@@ -3,50 +3,27 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { LogOut, User, Menu } from 'lucide-react';
 
-/** Side-profile four-door sedan (facing right), yellow fill — matches nav black square */
-function SedanLogoMark({ className }: { className?: string }) {
+/** Simple solid car profile icon */
+function TaxiLogoMark({ className }: { className?: string }) {
   return (
     <svg
       className={className}
-      viewBox="0 0 60 24"
-      fill="none"
+      viewBox="0 0 24 24"
+      fill="#FFC107"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden
-      preserveAspectRatio="xMidYMid meet"
     >
-      <path
-        fill="#FFC107"
-        d="M1.5 18.2V13.4l2.9-2.3h5.8l3.5-2.7c.55-.42 1.25-.65 1.95-.65h24.7c.75 0 1.45.25 2.05.68l3.4 2.67h5.9l2.85 2.32v4.8H1.5z"
-      />
-      <path
-        fill="#121212"
-        fillOpacity="0.35"
-        d="M10.5 11.4l4.8-.5 23.8-.4 5.6.75 1.75 2.15-2 .45H12.4l-1.9-2.45z"
-      />
-      <path
-        fill="#121212"
-        fillOpacity="0.2"
-        d="M23.2 9.6h13.6c.4 0 .78.1 1.1.3l1.35.95H21.8l1.2-1.05c.32-.28.72-.2 1.2-.2z"
-      />
-      <circle cx="14.2" cy="18.4" r="3.25" fill="#121212" />
-      <circle cx="14.2" cy="18.4" r="1.25" fill="#9CA3AF" />
-      <circle cx="45.8" cy="18.4" r="3.25" fill="#121212" />
-      <circle cx="45.8" cy="18.4" r="1.25" fill="#9CA3AF" />
-      <path
-        fill="#121212"
-        fillOpacity="0.45"
-        d="M51.2 13.4h2c.32 0 .58.25.58.55v1c0 .18-.14.34-.34.34h-1.7l-.54-1.9zM3.8 13.35h1.75c.2 0 .36.16.36.36v1.25c0 .2-.16.36-.36.36H3.3l.5-1.97z"
-      />
+      <path d="M19.44 10.12L16.29 5.4A2.99 2.99 0 0 0 13.8 4H8.54C7.27 4 6.16 4.79 5.68 5.96L3.34 11.66A2 2 0 0 0 3 12v3a2 2 0 0 0 2 2h1.22a3 3 0 0 0 5.56 0h4.44a3 3 0 0 0 5.56 0H20a2 2 0 0 0 2-2v-2a2 2 0 0 0-.66-1.5L19.44 10.12zM7.5 17a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM6 10L7.5 6.4C7.66 6.01 8.03 5.75 8.45 5.75H13l2.84 4.25H6z"/>
+      <path d="M10 2h3v2h-3z" />
     </svg>
   );
 }
-
 const Navbar = ({ session, compact = false }: { session: any; compact?: boolean }) => {
   const navigate = useNavigate();
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    navigate('/auth');
+    navigate('/');
   };
 
   return (
@@ -59,7 +36,7 @@ const Navbar = ({ session, compact = false }: { session: any; compact?: boolean 
         {/* Logo */}
         <Link to="/" className="flex items-center gap-2 group">
           <div className="w-10 h-10 bg-[#121212] flex items-center justify-center rounded-xl transform group-hover:rotate-12 transition-transform duration-300">
-            <SedanLogoMark className="w-[30px] h-[12px] shrink-0" />
+            <TaxiLogoMark className="w-[30px] h-[30px] shrink-0" />
           </div>
           <span className="text-2xl font-black tracking-tighter text-[#121212]">
             Route<span className="text-[#FFC107]">Mate</span>
@@ -102,12 +79,7 @@ const Navbar = ({ session, compact = false }: { session: any; compact?: boolean 
           )}
         </div>
 
-        {/* Mobile Menu Icon (Visual only, BottomNav handles navigation) */}
-        <div className="md:hidden">
-          <div className="w-8 h-8 flex items-center justify-center bg-gray-50 rounded-lg">
-            <Menu size={20} className="text-[#121212]" />
-          </div>
-        </div>
+        {/* Mobile Actions - Removed hamburger as BottomNav handles navigation */}
       </div>
     </motion.nav>
   );

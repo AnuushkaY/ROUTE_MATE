@@ -107,3 +107,13 @@ CREATE POLICY "Users can see messages of pools they are part of." ON public.pool
 CREATE POLICY "Users can insert messages." ON public.pool_messages FOR INSERT WITH CHECK (auth.uid() = sender_id);
 
 ALTER PUBLICATION supabase_realtime ADD TABLE pool_messages;
+
+-- 6. Performance Indices (Run these to speed up large tables)
+CREATE INDEX IF NOT EXISTS idx_pools_source_geohash ON public.pools (source_geohash);
+CREATE INDEX IF NOT EXISTS idx_pools_creator_id ON public.pools (creator_id);
+CREATE INDEX IF NOT EXISTS idx_pools_status ON public.pools (status);
+CREATE INDEX IF NOT EXISTS idx_pool_requests_pool_id ON public.pool_requests (pool_id);
+CREATE INDEX IF NOT EXISTS idx_pool_requests_requester_id ON public.pool_requests (requester_id);
+CREATE INDEX IF NOT EXISTS idx_ratings_ratee_id ON public.ratings (ratee_id);
+CREATE INDEX IF NOT EXISTS idx_ratings_rater_id ON public.ratings (rater_id);
+CREATE INDEX IF NOT EXISTS idx_pool_messages_pool_id ON public.pool_messages (pool_id);

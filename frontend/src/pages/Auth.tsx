@@ -57,7 +57,7 @@ const Auth = () => {
           }
         });
         if (error) throw error;
-        setMessage('An 8-digit SMS code has been sent to your phone!');
+        setMessage('A 6-digit SMS code has been sent to your phone!');
       }
 
       setIsTokenSent(true);
@@ -75,7 +75,7 @@ const Auth = () => {
     try {
       const code = otpToken.trim();
       if (!/^\d{6}$/.test(code)) {
-        setMessage('Please enter the complete 8-digit code.');
+        setMessage('Please enter the complete 6-digit code.');
         setLoading(false);
         return;
       }
@@ -274,7 +274,7 @@ const Auth = () => {
                     <CheckCircle2 size={32} className="text-[#FFC107]" />
                   </div>
                   <h3 className="text-xl font-black text-[#121212] tracking-tight">Code Sent!</h3>
-                  <p className="text-gray-400 text-sm font-medium">Please enter the 8-digit code we sent you.</p>
+                  <p className="text-gray-400 text-sm font-medium">Please enter the 6-digit code we sent you.</p>
                 </div>
 
                 <div className="relative">

@@ -12,6 +12,11 @@ import AnimatedEmptyState from '../components/AnimatedEmptyState';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
+// Cache across navigations to prevent "reloading" flashes
+let globalCachedPools: any[] = [];
+let globalCachedLocation: { lat: number, lng: number } | null = null;
+
+
 const customUserIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -52,8 +57,8 @@ const MapLayoutSync = ({ lat, lng, expanded }: { lat: number; lng: number; expan
 };
 
 const Home = () => {
-  const [pools, setPools] = useState<any[]>([]);
-  const [location, setLocation] = useState<{ lat: number, lng: number } | null>(null);
+  const [pools, setPools] = useState<any[]>(globalCachedPools);
+  const [location, setLocation] = useState<{ lat: number, lng: number } | null>(globalCachedLocation);
 
   // Search state
   const [searchFrom, setSearchFrom] = useState('');
@@ -62,56 +67,86 @@ const Home = () => {
   const [searchTime, setSearchTime] = useState('');
   const isSearchComplete = searchFrom && searchTo;
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(globalCachedPools.length === 0);
   const [mapExpanded, setMapExpanded] = useState(false);
 
   const navigate = useNavigate();
   const resultsRef = useRef<HTMLDivElement>(null);
+  const locationRef = useRef<{ lat: number, lng: number } | null>(null);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync ref with state
+  useEffect(() => { locationRef.current = location; }, [location]);
 
   useEffect(() => {
     getUserLocation();
 
     const channel = supabase.channel('pools_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pools' }, () => {
-        if (location) fetchNearbyPools(location.lat, location.lng);
+        if (locationRef.current) {
+          if (refreshTimer.current) clearTimeout(refreshTimer.current);
+          refreshTimer.current = setTimeout(() => {
+            fetchNearbyPools(locationRef.current!.lat, locationRef.current!.lng);
+          }, 1500); // 1.5s debounce to keep UI stable during bursts
+        }
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { 
+      supabase.removeChannel(channel);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
   }, []);
 
 
 
-  const fetchNearbyPools = async (lat: number, lng: number) => {
-    setLoading(true);
+  const fetchNearbyPools = async (lat: number, lng: number, globalSweep: boolean = false) => {
+    if (globalCachedPools.length === 0) setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
       const response = await axios.post(`${API_BASE_URL}/pools/nearby`, {
-        lat, lng, radius_km: 15.0, user_id: user?.id
+        lat, lng, radius_km: globalSweep ? 0 : 15.0, user_id: user?.id
       });
-      setPools(response.data.pools || []);
+      const newPools = response.data.pools || [];
+      setPools(newPools);
+      globalCachedPools = newPools;
     } catch (err) {
       console.error('Failed to load pools', err);
-      setPools([]);
+      if (globalCachedPools.length === 0) setPools([]);
     } finally {
       setLoading(false);
     }
   };
 
   const getUserLocation = () => {
+    if (globalCachedLocation) {
+      fetchNearbyPools(globalCachedLocation.lat, globalCachedLocation.lng);
+      // Wait to see if geolocation updated, but don't block
+    } else {
+      // Instant visual feedback: Fetch global pools while we wait for the browser's slow GPS lock
+      const defaultLoc = { lat: 19.0760, lng: 72.8777 }; 
+      fetchNearbyPools(defaultLoc.lat, defaultLoc.lng, true);
+    }
+    
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
           setLocation({ lat, lng });
-          fetchNearbyPools(lat, lng);
+          globalCachedLocation = { lat, lng };
+          fetchNearbyPools(lat, lng, false);
         },
         () => {
-          const defaultLoc = { lat: 19.0760, lng: 72.8777 }; // fallback map center when geolocation unavailable
-          setLocation(defaultLoc);
-          fetchNearbyPools(defaultLoc.lat, defaultLoc.lng);
-        }
+          const defaultLoc = { lat: 19.0760, lng: 72.8777 }; // fallback
+          if (!globalCachedLocation) {
+            setLocation(defaultLoc);
+            globalCachedLocation = defaultLoc;
+            fetchNearbyPools(defaultLoc.lat, defaultLoc.lng, false);
+          }
+        },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: Infinity }
       );
     }
   };
@@ -134,7 +169,8 @@ const Home = () => {
         const lng = parseFloat(res.data[0].lon);
         setLocation({ lat, lng });
 
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { session } } = await supabase.auth.getSession();
+        const user = session?.user;
         const response = await axios.post(`${API_BASE_URL}/pools/nearby`, {
           lat, lng, radius_km: 15.0, user_id: user?.id,
           dest_lat: destLat, dest_lng: destLng, search_date: searchDate, search_time: searchTime
@@ -156,11 +192,11 @@ const Home = () => {
       exit={{ opacity: 0 }}
       className="flex flex-col bg-white"
     >
-      <div className="relative">
+      <div className="relative min-h-screen flex flex-col justify-start pb-10">
         <HeroSection onExploreClick={() => resultsRef.current?.scrollIntoView({ behavior: 'smooth' })} />
 
         {/* SEARCH SECTION — compact first fold; modest gap before pools */}
-        <div id="search" className="container mx-auto px-6 mt-2 md:mt-3 relative z-20 pb-4 md:pb-5">
+        <div id="search" className="container mx-auto px-6 mt-12 md:mt-24 relative z-20 pb-4 md:pb-5">
           <motion.div
             initial={{ y: 50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -236,24 +272,20 @@ const Home = () => {
       </div>
 
       {/* RESULTS SECTION */}
-      <section ref={resultsRef} className="container mx-auto px-6 pt-2 pb-10 md:pt-4 md:pb-14 scroll-mt-24">
+      <section id="search" ref={resultsRef} className="w-full px-6 md:px-12 pt-2 pb-10 md:pt-4 md:pb-14 scroll-mt-24 max-w-[1500px] mx-auto">
         <div className="flex flex-col items-center text-center mb-10 md:mb-12">
           <h2 className="text-4xl font-black text-[#121212] tracking-tighter">Available <span className="text-[#FFC107] italic">Pools</span></h2>
           <div className="h-1 w-20 md:w-24 bg-gray-100 mt-4 rounded-full" />
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-8">
+        <div className="flex flex-col lg:flex-row gap-8 lg:gap-10 w-full items-start">
           {/* RIDES COLUMN */}
-          <div className="flex-1 flex flex-col gap-6 order-2 lg:order-1 min-h-0">
+          <div className={`w-full ${mapExpanded ? 'lg:w-[40%]' : 'lg:w-[60%]'} transition-all duration-500 flex flex-col order-2 lg:order-1 min-h-[600px]`}>
             {pools.length === 0 ? (
               <AnimatedEmptyState />
             ) : (
               <div
-                className={`grid grid-cols-1 md:grid-cols-2 gap-6 pr-2 custom-scrollbar scroll-smooth ${
-                  pools.length > 6
-                    ? 'max-h-[820px] overflow-y-auto overscroll-y-contain'
-                    : ''
-                }`}
+                className={`grid grid-cols-1 gap-5 md:grid-cols-2 pr-4 custom-scrollbar scroll-smooth overflow-y-auto max-h-[640px]`}
               >
                 <AnimatePresence>
                   {pools.map((pool, idx) => (
@@ -269,10 +301,17 @@ const Home = () => {
                 </AnimatePresence>
               </div>
             )}
-            <div className="flex flex-col items-center gap-3 pt-8 md:pt-12 px-4">
+            <div className="mt-8 pt-6 border-t border-gray-100 flex justify-center px-4 w-full">
               <button
                 type="button"
-                onClick={() => navigate('/create-pool')}
+                onClick={async () => {
+                  const { data: { session } } = await supabase.auth.getSession();
+                  if (!session) {
+                    navigate('/auth');
+                  } else {
+                    navigate('/create-pool');
+                  }
+                }}
                 className="btn-primary flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-3 w-full max-w-xl px-8 py-5 md:py-6 rounded-2xl text-center shadow-xl hover:scale-[1.02] active:scale-[0.98]"
               >
                 <span className="font-bold normal-case tracking-normal text-sm md:text-base text-[#121212]/80">
@@ -287,9 +326,9 @@ const Home = () => {
 
           {/* MAP COLUMN — no Framer `layout` here: transforms break Leaflet tile positioning */}
           <div
-            className={`w-full lg:sticky lg:top-24 order-1 lg:order-2 transition-all duration-500 ${mapExpanded ? 'lg:flex-[1.5]' : 'lg:flex-[0.8]'}`}
+            className={`w-full ${mapExpanded ? 'lg:w-[60%]' : 'lg:w-[40%]'} lg:sticky lg:top-24 order-1 lg:order-2 transition-all duration-500`}
           >
-            <div className={`relative w-full rounded-3xl overflow-hidden border border-gray-100 shadow-lg transition-all duration-500 isolate ${mapExpanded ? 'h-[600px] md:h-[800px]' : 'h-[320px] md:h-[560px]'}`}>
+            <div className={`relative w-full rounded-3xl overflow-hidden border border-gray-100 shadow-lg isolate transition-all duration-500 mb-8 lg:mb-0 ${mapExpanded ? 'h-[600px] lg:h-[800px]' : 'h-[400px] lg:h-[640px]'}`}>
               {location ? (
                 <MapContainer
                   center={[location.lat, location.lng]}
@@ -306,11 +345,7 @@ const Home = () => {
                   </Marker>
 
                   {pools.map((pool) => (
-                    <Marker key={pool.id} position={[pool.source_lat, pool.source_lng]} icon={customPoolIcon}>
-                      <Popup className="premium-popup">
-                        <div className="p-2 font-bold text-[#121212] italic">₹{pool.price_per_seat} to {pool.end_location}</div>
-                      </Popup>
-                    </Marker>
+                    <Marker key={pool.id} position={[pool.source_lat, pool.source_lng]} icon={customPoolIcon} />
                   ))}
                 </MapContainer>
               ) : (
@@ -358,7 +393,10 @@ const Home = () => {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-10">
             <Link to="/" className="flex items-center gap-2 group w-fit">
               <div className="w-10 h-10 bg-white/10 flex items-center justify-center rounded-xl group-hover:bg-[#FFC107]/20 transition-colors">
-                <span className="text-[#FFC107] font-black text-xl italic">R</span>
+                <svg viewBox="0 0 24 24" fill="#FFC107" xmlns="http://www.w3.org/2000/svg" className="w-[30px] h-[30px] shrink-0" aria-hidden="true">
+                  <path d="M19.44 10.12L16.29 5.4A2.99 2.99 0 0 0 13.8 4H8.54C7.27 4 6.16 4.79 5.68 5.96L3.34 11.66A2 2 0 0 0 3 12v3a2 2 0 0 0 2 2h1.22a3 3 0 0 0 5.56 0h4.44a3 3 0 0 0 5.56 0H20a2 2 0 0 0 2-2v-2a2 2 0 0 0-.66-1.5L19.44 10.12zM7.5 17a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM6 10L7.5 6.4C7.66 6.01 8.03 5.75 8.45 5.75H13l2.84 4.25H6z"/>
+                  <path d="M10 2h3v2h-3z" />
+                </svg>
               </div>
               <span className="text-xl font-black tracking-tighter">
                 Route<span className="text-[#FFC107]">Mate</span>
