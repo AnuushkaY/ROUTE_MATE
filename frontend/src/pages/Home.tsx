@@ -10,7 +10,7 @@ import HeroSection from '../components/HeroSection';
 import PoolCard from '../components/PoolCard';
 import AnimatedEmptyState from '../components/AnimatedEmptyState';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'https://route-mate-ogg1.onrender.com/api';
 
 // Cache across navigations to prevent "reloading" flashes
 let globalCachedPools: any[] = [];
@@ -92,7 +92,7 @@ const Home = () => {
       })
       .subscribe();
 
-    return () => { 
+    return () => {
       supabase.removeChannel(channel);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
@@ -125,10 +125,10 @@ const Home = () => {
       // Wait to see if geolocation updated, but don't block
     } else {
       // Instant visual feedback: Fetch global pools while we wait for the browser's slow GPS lock
-      const defaultLoc = { lat: 19.0760, lng: 72.8777 }; 
+      const defaultLoc = { lat: 19.0760, lng: 72.8777 };
       fetchNearbyPools(defaultLoc.lat, defaultLoc.lng, true);
     }
-    
+
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -158,11 +158,11 @@ const Home = () => {
       const res = await axios.get(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchFrom)}`);
       let destLat, destLng;
       if (searchTo) {
-          const destRes = await axios.get(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchTo)}`);
-          if (destRes.data && destRes.data.length > 0) {
-             destLat = parseFloat(destRes.data[0].lat);
-             destLng = parseFloat(destRes.data[0].lon);
-          }
+        const destRes = await axios.get(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchTo)}`);
+        if (destRes.data && destRes.data.length > 0) {
+          destLat = parseFloat(destRes.data[0].lat);
+          destLng = parseFloat(destRes.data[0].lon);
+        }
       }
       if (res.data && res.data.length > 0) {
         const lat = parseFloat(res.data[0].lat);
@@ -394,7 +394,7 @@ const Home = () => {
             <Link to="/" className="flex items-center gap-2 group w-fit">
               <div className="w-10 h-10 bg-white/10 flex items-center justify-center rounded-xl group-hover:bg-[#FFC107]/20 transition-colors">
                 <svg viewBox="0 0 24 24" fill="#FFC107" xmlns="http://www.w3.org/2000/svg" className="w-[30px] h-[30px] shrink-0" aria-hidden="true">
-                  <path d="M19.44 10.12L16.29 5.4A2.99 2.99 0 0 0 13.8 4H8.54C7.27 4 6.16 4.79 5.68 5.96L3.34 11.66A2 2 0 0 0 3 12v3a2 2 0 0 0 2 2h1.22a3 3 0 0 0 5.56 0h4.44a3 3 0 0 0 5.56 0H20a2 2 0 0 0 2-2v-2a2 2 0 0 0-.66-1.5L19.44 10.12zM7.5 17a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM6 10L7.5 6.4C7.66 6.01 8.03 5.75 8.45 5.75H13l2.84 4.25H6z"/>
+                  <path d="M19.44 10.12L16.29 5.4A2.99 2.99 0 0 0 13.8 4H8.54C7.27 4 6.16 4.79 5.68 5.96L3.34 11.66A2 2 0 0 0 3 12v3a2 2 0 0 0 2 2h1.22a3 3 0 0 0 5.56 0h4.44a3 3 0 0 0 5.56 0H20a2 2 0 0 0 2-2v-2a2 2 0 0 0-.66-1.5L19.44 10.12zM7.5 17a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm11 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM6 10L7.5 6.4C7.66 6.01 8.03 5.75 8.45 5.75H13l2.84 4.25H6z" />
                   <path d="M10 2h3v2h-3z" />
                 </svg>
               </div>
